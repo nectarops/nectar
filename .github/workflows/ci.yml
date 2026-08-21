@@ -22,13 +22,15 @@ jobs:
         with:
           go-version: 1.26.5
           cache-dependency-path: go.sum
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+        with:
+          version: 11.0.9
+          run_install: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.13.0
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
-      - name: Install pnpm
-        run: corepack enable && corepack prepare pnpm@11.0.9 --activate
       - name: Install Web dependencies
         run: pnpm --dir web install --frozen-lockfile
       - name: Verify
