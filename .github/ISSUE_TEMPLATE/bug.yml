@@ -1,0 +1,41 @@
+name: Bug report
+description: Report a reproducible Dock-Weaver defect.
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not post secrets or security vulnerabilities. Use a private security advisory for vulnerabilities."
+  - type: input
+    id: version
+    attributes:
+      label: Dock-Weaver version
+      placeholder: 0.1.0 and commit, if known
+    validations: { required: true }
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Redacted OS, architecture, Docker version, node role, and browser.
+    validations: { required: true }
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction
+      description: Minimal, ordered steps with sensitive values replaced.
+    validations: { required: true }
+  - type: textarea
+    id: expected
+    attributes: { label: Expected behavior }
+    validations: { required: true }
+  - type: textarea
+    id: actual
+    attributes: { label: Actual behavior and redacted logs }
+    validations: { required: true }
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed credentials, keys, join tokens, initialization tokens, and private infrastructure details.
+          required: true

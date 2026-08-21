@@ -1,0 +1,31 @@
+# Build outputs
+/bin/
+/dist/
+/dock-weaver
+/web/dist/
+/internal/webassets/dist/*
+!/internal/webassets/dist/.gitkeep
+
+# Dependencies and caches
+/web/node_modules/
+/.pnpm-store/
+/.cache/
+
+# Runtime data
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+/.env
+/.env.*
+!/.env.example
+
+# Test and editor output
+/coverage/
+/playwright-report/
+/test-results/
+.DS_Store
+.idea/
+.vscode/
+*.swp

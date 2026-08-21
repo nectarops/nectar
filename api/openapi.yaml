@@ -1,0 +1,194 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+openapi: 3.1.0
+info:
+  title: Dock-Weaver API
+  version: 0.1.0
+  license:
+    name: AGPL-3.0-only
+    identifier: AGPL-3.0-only
+servers:
+  - url: /
+paths:
+  /health/live:
+    get:
+      operationId: getLiveness
+      responses:
+        "200": { description: Process is alive. }
+  /health/ready:
+    get:
+      operationId: getReadiness
+      responses:
+        "200": { description: Required dependencies are ready. }
+        "503": { $ref: "#/components/responses/Error" }
+  /api/v1/version:
+    get:
+      operationId: getVersion
+      responses:
+        "200":
+          description: Running source and build identity.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Version" }
+  /api/v1/setup/status:
+    get:
+      operationId: getSetupStatus
+      responses:
+        "200":
+          description: Whether the owner account exists.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [completed]
+                properties:
+                  completed: { type: boolean }
+  /api/v1/setup/complete:
+    post:
+      operationId: completeSetup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [initToken, username, password]
+              properties:
+                initToken: { type: string, writeOnly: true }
+                username: { type: string, minLength: 3, maxLength: 32 }
+                password: { type: string, minLength: 12, writeOnly: true }
+      responses:
+        "201": { $ref: "#/components/responses/User" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, writeOnly: true }
+      responses:
+        "200": { $ref: "#/components/responses/User" }
+        "401": { $ref: "#/components/responses/Error" }
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      responses:
+        "204": { description: Session removed. }
+  /api/v1/auth/session:
+    get:
+      operationId: getSession
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/User" }
+        "401": { $ref: "#/components/responses/Error" }
+  /api/v1/cluster:
+    get:
+      operationId: getCluster
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: Current Docker Engine and Swarm snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Cluster" }
+        "503": { $ref: "#/components/responses/Error" }
+  /api/v1/deployments:
+    post:
+      operationId: deployService
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeploymentInput" }
+      responses:
+        "202":
+          description: Swarm accepted the service create or update.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeploymentResult" }
+        "400": { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: dw_session
+  responses:
+    User:
+      description: Authenticated user.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/User" }
+    Error:
+      description: Structured API error.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    User:
+      type: object
+      required: [id, username, role, createdAt]
+      properties:
+        id: { type: integer, format: int64 }
+        username: { type: string }
+        role: { type: string, enum: [owner, operator, viewer] }
+        createdAt: { type: string, format: date-time }
+    Version:
+      type: object
+      required: [version, commit, sourceUrl]
+      properties:
+        version: { type: string }
+        commit: { type: string }
+        sourceUrl: { type: string, format: uri }
+    Cluster:
+      type: object
+      additionalProperties: true
+      required: [available, swarmState, nodeRole, nodes, managers]
+      properties:
+        available: { type: boolean }
+        swarmState: { type: string }
+        nodeRole: { type: string }
+        nodes: { type: integer }
+        managers: { type: integer }
+    DeploymentInput:
+      type: object
+      additionalProperties: false
+      required: [serviceName, image, version, domain, acmeEmail, port, replicas]
+      properties:
+        serviceName: { type: string }
+        image: { type: string, description: Repository without tag or digest. }
+        version: { type: string, not: { const: latest } }
+        domain: { type: string }
+        acmeEmail: { type: string, format: email }
+        port: { type: integer, minimum: 1, maximum: 65535 }
+        replicas: { type: integer, minimum: 1, maximum: 1000 }
+    DeploymentResult:
+      type: object
+      required: [serviceId, image, updated, warnings]
+      properties:
+        serviceId: { type: string }
+        image: { type: string }
+        updated: { type: boolean }
+        warnings:
+          type: array
+          items: { type: string }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }

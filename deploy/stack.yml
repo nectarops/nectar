@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+
+version: "3.9"
+
+services:
+  dock-weaver:
+    image: ${DOCK_WEAVER_IMAGE:?set DOCK_WEAVER_IMAGE to a pinned tag or digest}
+    user: root
+    environment:
+      DW_ADDR: ":8080"
+      DW_COOKIE_SECURE: "false"
+      DW_DATA_DIR: /var/lib/dock-weaver
+      DW_INIT_TOKEN_FILE: /run/secrets/dock_weaver_init_token
+      DW_REQUIRE_DOCKER: "true"
+    ports:
+      - target: 8080
+        published: ${DOCK_WEAVER_WEB_PORT:-8080}
+        protocol: tcp
+        mode: ingress
+    volumes:
+      - dock_weaver_data:/var/lib/dock-weaver
+      - /var/run/docker.sock:/var/run/docker.sock
+    secrets:
+      - dock_weaver_init_token
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+          - node.labels.dock-weaver.control == true
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+      update_config:
+        parallelism: 1
+        order: stop-first
+        failure_action: rollback
+
+volumes:
+  dock_weaver_data:
+
+secrets:
+  dock_weaver_init_token:
+    external: true

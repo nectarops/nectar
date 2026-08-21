@@ -1,0 +1,12 @@
+.git
+.github
+.agents
+.codex
+.pnpm-store
+bin
+coverage
+web/dist
+web/node_modules
+*.db
+*.db-shm
+*.db-wal

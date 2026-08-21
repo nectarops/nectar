@@ -1,274 +1,277 @@
-# Dock-Weaver 产品与技术规划
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
 
-> 文档状态：Draft 0.1  
-> 目标：把一台 Linux 服务器初始化为 Docker Swarm Manager，并通过 Web 页面完成节点纳管、Docker 版本统一、Traefik 自动 HTTPS 和应用版本部署。
+# Dock-Weaver Product and Technical Plan
 
-## 1. 产品定位
+> Document status: Draft 0.2
+> Goal: initialize a Linux server as a Docker Swarm Manager, then use a Web interface to enroll nodes, standardize Docker versions, provide automatic HTTPS through Traefik, and deploy explicit application image versions.
 
-Dock-Weaver 是一个“先装控制面，再从控制面扩展集群”的轻量级 Docker Swarm 管理工具。
+This document describes the intended product and architecture. Features that are already implemented are identified in the repository README and changelog; roadmap items in this document must not be interpreted as completed behavior.
 
-它解决以下核心问题：
+## 1. Product Positioning
 
-1. 用户可以指定 Docker Engine 版本，在首台服务器上一键安装 Docker、初始化 Swarm、部署 Dock-Weaver。
-2. Dock-Weaver 启动 Web 管理页面，不要求用户日常手写 Swarm 命令。
-3. 用户通过 SSH 添加其他 Linux 服务器；系统完成环境检查、安装同一 Docker 版本并将节点加入 Swarm。
-4. 系统安装和管理 Traefik，通过域名自动发现路由并申请、续期 HTTPS 证书。
-5. 用户录入镜像仓库、镜像版本和部署参数后即可创建或升级服务，并看到完整过程、健康状态和回滚入口。
+Dock-Weaver is a lightweight Docker Swarm management tool built around a simple model: install the control plane first, then expand the cluster from that control plane.
 
-### 1.1 目标用户
+It addresses five core needs:
 
-- 有 2～20 台 Linux 服务器的小型团队或个人开发者。
-- 希望保留 Docker/Compose 的使用习惯，但不想引入 Kubernetes 的用户。
-- 需要可重复部署、滚动更新、自动 HTTPS 和基础集群管理能力的自托管场景。
+1. An operator can choose a Docker Engine version, install Docker on the first server, initialize Swarm, and deploy Dock-Weaver.
+2. Dock-Weaver provides a Web management interface, so routine work does not require handwritten Swarm commands.
+3. An operator can add Linux servers over SSH; Dock-Weaver checks the environment, installs the same Docker version, and joins each server to the Swarm.
+4. Dock-Weaver installs and manages Traefik, discovers routes from service labels, and obtains and renews HTTPS certificates.
+5. An operator can enter an image repository, image version, and deployment settings to create or upgrade a service while observing progress, health, and rollback options.
 
-### 1.2 首版不做
+### 1.1 Target Users
 
-- 不把 Dock-Weaver 做成通用服务器运维面板。
-- 不提供 Kubernetes、Nomad 或单机 Docker 编排。
-- 不负责域名注册；首版仅检查 DNS 是否正确解析，DNS 服务商 API 集成放到后续版本。
-- 不在首版实现多 Dock-Weaver 实例主动写入同一集群。
-- 不提供完整 CI/CD；首版通过页面或 API 触发部署，Webhook 放到后续版本。
+- Small teams and individual developers operating approximately 2–20 Linux servers.
+- Operators who want to retain Docker and Compose workflows without adopting Kubernetes.
+- Self-hosting environments that need repeatable deployments, rolling updates, automatic HTTPS, and basic cluster management.
 
-## 2. 使用体验
+### 1.2 Out of Scope for the First Release
 
-### 2.1 首台 Manager 安装
+- A general-purpose server administration panel.
+- Kubernetes, Nomad, or standalone Docker orchestration.
+- Domain registration. The first release only checks DNS; DNS provider API integrations come later.
+- Multiple active Dock-Weaver writers managing the same cluster.
+- A complete CI/CD product. The first release triggers deployments through the Web UI or API; webhooks come later.
 
-用户在准备作为 Manager 的 Linux 宿主机上运行一条安装命令。首个正式版本发布后，`<owner>` 替换为实际的 GitHub 组织或用户：
+## 2. User Experience
+
+### 2.1 Installing the First Manager
+
+The operator runs one command on the Linux host that will become the first Manager. After a release is published:
 
 ```bash
-curl -fsSL https://github.com/<owner>/dock-weaver/releases/latest/download/install.sh \
+curl -fsSL https://github.com/ranen/dock-weaver/releases/download/v0.1.0/install.sh \
   | sudo bash
 ```
 
-需要指定 Docker Engine 版本或 Manager 地址时，通过非交互参数传入：
+Docker Engine version and Manager address can be supplied non-interactively:
 
 ```bash
-curl -fsSL https://github.com/<owner>/dock-weaver/releases/latest/download/install.sh \
+curl -fsSL https://github.com/ranen/dock-weaver/releases/download/v0.1.0/install.sh \
   | sudo bash -s -- \
-      --docker-version <目标版本> \
-      --advertise-addr <Manager固定IP> \
+      --docker-version <target-version> \
+      --advertise-addr <manager-static-ip> \
       --web-port 8080
 ```
 
-安装器按以下步骤执行：
+The installer performs these steps:
 
-1. 检查操作系统、CPU 架构、root/sudo 权限、网络端口和现有 Docker/Swarm 状态。
-2. 从 Docker 官方软件源读取该发行版可安装版本，并验证用户指定的版本。
-3. 安装固定版本的 Docker Engine、CLI、containerd 和 Compose 插件。
-4. 配置 Docker 服务开机启动，验证 daemon 可用。
-5. 使用固定管理地址初始化 Swarm。
-6. 创建 Dock-Weaver 所需的 overlay 网络、数据目录、Docker secrets 和节点标签。
-7. 以固定版本镜像和 Swarm service 方式启动 Dock-Weaver，并约束在带有控制标签的 Manager 节点上。
-8. 等待 Dock-Weaver readiness 检查成功。
-9. 输出可直接在浏览器打开的 Web 初始化地址，例如 `http://<manager-ip>:8080/setup`，以及一次性初始化令牌和后续必要操作。
+1. Check the operating system, CPU architecture, root privileges, network ports, and existing Docker/Swarm state.
+2. Query Docker's official repository for versions available to the distribution and validate the requested version.
+3. Install pinned Docker Engine, CLI, containerd, Buildx, and Compose plugin packages.
+4. Enable Docker at boot and verify that the daemon is available.
+5. Initialize Swarm with a stable advertise address when the host is not already a member.
+6. Create required data directories, Docker secrets, and control-node labels.
+7. Start Dock-Weaver as a pinned Swarm service constrained to a labeled Manager.
+8. Wait for the Dock-Weaver readiness check.
+9. Print the exact Web setup URL, one-time initialization token, and required follow-up actions.
 
-若主机已经安装 Docker，安装器不得静默覆盖：先展示当前版本、目标版本及升级/降级风险，只有明确传入允许参数后才变更。
+If Docker is already installed, the installer must never replace it silently. It must show the current and requested versions and require explicit authorization before an upgrade or downgrade.
 
-由于 `curl | sudo bash` 会直接以 root 权限运行远程内容，正式发布时还必须提供“下载 → 查看 → 校验 checksum → 执行”的等价安装方式。Bootstrap 脚本下载的镜像以外的所有发布文件都必须验证 checksum 或签名。
+Because `curl | sudo bash` executes remote content as root, every release must also document an equivalent download, inspect, checksum-verify, and execute flow. Every downloaded release artifact other than container image layers must have a verified checksum or signature.
 
-### 2.2 首次进入 Web 页面
+### 2.2 First Web Visit
 
-首次向导包括：
+The complete first-run wizard is intended to cover:
 
-1. 使用一次性令牌创建首个管理员账号。
-2. 设置站点名称、时区和日志保留时间。
-3. 确认 Manager 的 advertise address 与对外访问地址。
-4. 配置镜像仓库凭证，可跳过公共仓库配置。
-5. 配置 Traefik：域名、ACME 邮箱、证书挑战方式和入口节点。
-6. 运行集群健康检查并进入总览页。
+1. Create the first Owner account using the one-time initialization token.
+2. Configure site name, time zone, and log retention.
+3. Confirm Manager advertise and external access addresses.
+4. Configure registry credentials, with public registries supported without credentials.
+5. Configure Traefik domain, ACME email, challenge type, and ingress node.
+6. Run cluster health checks and enter the overview.
 
-一次性令牌使用后立即失效，并且不得写入常规应用日志。
+The initialization token must become unusable after setup and must never appear in ordinary application logs.
 
-### 2.3 添加服务器
+### 2.3 Adding a Server
 
-用户在“节点 → 添加节点”中填写：
+The **Nodes → Add node** workflow collects:
 
-- 主机名或 IP、SSH 端口、SSH 用户。
-- 身份验证方式：私钥优先，密码作为兼容选项。
-- sudo 方式。
-- 节点角色：Worker 或 Manager。
-- advertise address、data path address，可选择自动探测。
-- 节点标签，例如 `region=shanghai`、`disk=ssd`。
+- Hostname or IP address, SSH port, and SSH user.
+- Authentication method, preferring private keys while supporting passwords for compatibility.
+- `sudo` method.
+- Worker or Manager role.
+- Advertise address and data-path address, with optional safe discovery.
+- Node labels such as `region=shanghai` and `disk=ssd`.
 
-执行流程：
+The operation follows this sequence:
 
 ```text
-SSH 连通性检查
-  → 主机指纹确认
-  → 系统与端口预检
-  → 检查已有 Docker/Swarm
-  → 查询目标版本在该主机是否可用
-  → 安装或对齐 Docker 版本
-  → 获取短时 join token
-  → 加入 Swarm
-  → Manager 侧确认节点 Ready
-  → 写入节点标签
-  → 清理远端临时文件与敏感信息
+SSH connectivity check
+  → host-key fingerprint confirmation
+  → operating-system and port preflight
+  → existing Docker and Swarm inspection
+  → target-version availability check
+  → Docker installation or version alignment
+  → short-lived join-token retrieval
+  → Swarm join
+  → Manager-side Ready confirmation
+  → node-label update
+  → remote temporary-file and secret cleanup
 ```
 
-每一步均展示状态、耗时和脱敏日志。失败后允许从安全步骤重试，而不是从头重复执行。
+Each step shows status, duration, and redacted logs. A failed operation resumes from a safe step instead of repeating all changes blindly.
 
-### 2.4 部署应用
+### 2.4 Deploying an Application
 
-首版提供两种入口：
+The first release provides two deployment paths.
 
-#### 简单表单
+#### Simple Form
 
-- 应用名、服务名。
-- 镜像仓库，例如 `registry.example.com/team/api`。
-- 镜像版本，例如 `1.4.2`；禁止默认使用 `latest`，允许用户显式放开。
-- 容器内部端口。
-- 副本数、CPU/内存限制。
-- 环境变量、Docker secrets/configs。
-- 域名、路径、HTTPS 开关。
-- 健康检查、滚动升级和失败回滚策略。
-- 节点约束和网络。
+- Application and service name.
+- Image repository, for example `registry.example.com/team/api`.
+- Explicit image version, for example `1.4.2`; implicit `latest` is prohibited.
+- Internal container port.
+- Replica count and CPU/memory limits.
+- Environment variables and Docker secrets/configs.
+- Domain, path, and HTTPS setting.
+- Health check, rolling-update, and rollback policy.
+- Node constraints and networks.
 
 #### Stack YAML
 
-高级用户可导入兼容 `docker stack deploy` 的 Compose 文件。系统在保存前完成 schema、镜像、网络、secret 引用和 Traefik label 检查，并展示最终差异。
+Advanced operators can import a Compose file compatible with `docker stack deploy`. Before saving, Dock-Weaver validates its schema, images, networks, secret references, and Traefik labels and shows the resulting diff.
 
-点击“部署”后：
+After **Deploy** is selected, Dock-Weaver:
 
-1. 规范化并校验部署规格。
-2. 如有私有仓库，验证凭证和镜像 manifest 是否存在。
-3. 尽可能将 tag 解析为 digest，并在部署记录中保存 tag 与 digest。
-4. 生成 Swarm service/stack 规格和 Traefik service labels。
-5. 创建或滚动更新服务。
-6. 观察任务进入 Running、健康检查通过、Traefik 路由可达。
-7. 达到成功条件后完成部署；超时或失败时按策略暂停或自动回滚。
+1. Normalizes and validates the deployment specification.
+2. Validates private-registry credentials and the image manifest when applicable.
+3. Resolves the tag to a digest when possible and records both requested tag and resolved digest.
+4. Generates the Swarm service/stack specification and Traefik service labels.
+5. Creates the service or performs a rolling update.
+6. Observes tasks reaching Running, health checks succeeding, and the Traefik route becoming reachable.
+7. Marks the release successful or applies the configured pause/rollback policy on failure or timeout.
 
-同一个应用再次输入新版本时，页面应展示：
+When a new version is entered for an existing application, the UI should show:
 
 ```text
-当前：registry.example.com/team/api:1.4.2
-目标：registry.example.com/team/api:1.5.0
-策略：先启动后停止，parallelism=1，失败自动回滚
+Current: registry.example.com/team/api:1.4.2
+Target:  registry.example.com/team/api:1.5.0
+Policy:  start-first, parallelism=1, automatic rollback on failure
 ```
 
-## 3. 总体架构
+## 3. Overall Architecture
 
 ```mermaid
 flowchart LR
-    U[管理员浏览器] -->|HTTPS / REST / SSE| W[Dock-Weaver Web + API]
+    U[Administrator browser] -->|HTTPS / REST / SSE| W[Dock-Weaver Web + API]
     W --> DB[(SQLite)]
     W -->|Docker Engine API| S[Swarm Manager]
-    W -->|SSH| N1[Worker / Manager 节点]
-    W -->|查询 manifest| R[镜像仓库]
-    S --> T[Traefik Service]
-    S --> A[业务 Services / Stacks]
-    T -->|80 / 443| C[外部访问者]
-    T -->|ACME| LE[证书颁发机构]
+    W -->|SSH| N1[Worker / Manager node]
+    W -->|Manifest lookup| R[Image registry]
+    S --> T[Traefik service]
+    S --> A[Application services / stacks]
+    T -->|80 / 443| C[External clients]
+    T -->|ACME| LE[Certificate authority]
     S <-->|Swarm mTLS / overlay| N1
 ```
 
-### 3.1 推荐技术栈
+### 3.1 Technology Stack
 
-- 后端：Go，单二进制，提供 REST API、SSE 任务日志和静态文件服务。
-- 前端：React + TypeScript + Vite + shadcn/ui，使用 Tailwind CSS，构建后嵌入 Go 二进制。
-- 数据库：MVP 使用 SQLite WAL，数据卷固定在控制节点。
-- Docker 操作：优先使用 Docker Engine Go SDK；只有安装阶段使用受控 shell 命令。
-- SSH：Go SSH 客户端，支持私钥、加密私钥和密码，强制 known-hosts 校验。
-- 后台任务：数据库持久化任务队列 + 单实例 worker；所有动作具备幂等键。
-- 日志：结构化日志；敏感字段在进入日志系统前统一脱敏。
+- Backend: Go single binary providing REST APIs, SSE operation events, and static assets.
+- Frontend: React, TypeScript, Vite, shadcn/ui, and Tailwind CSS, embedded into the Go binary after production build.
+- Database: SQLite in WAL mode for the MVP, stored on a control-node volume.
+- Docker operations: Docker Engine Go SDK wherever structured APIs exist; controlled shell commands only during host installation.
+- SSH: Go SSH client with private-key, encrypted-key, and password support and mandatory known-hosts verification.
+- Background work: database-backed durable queue with one worker instance; every mutation has an idempotency key.
+- Logging: structured logs with centralized redaction before sensitive fields reach the logger.
 
-### 3.2 运行单元
+### 3.2 Runtime Unit
 
-首版由一个 Dock-Weaver service 提供 API、页面和任务执行器，副本数为 1，并使用节点约束：
+The first release uses one Dock-Weaver service replica for its API, Web UI, and operation worker, with these constraints:
 
 - `node.role == manager`
 - `node.labels.dock-weaver.control == true`
 
-这样可以快速交付并保持状态一致。若 Dock-Weaver 暂时不可用，Swarm 中已经运行的服务仍继续运行，但新增、升级和扩缩容操作会暂停。
+This keeps state ownership clear. If Dock-Weaver is temporarily unavailable, running Swarm services continue, but new deployments, upgrades, and scaling operations pause.
 
-### 3.3 后续高可用路线
+### 3.3 High-Availability Path
 
-控制面高可用必须单独设计，不能只把 Dock-Weaver 的副本数从 1 改为 3：
+Control-plane HA requires an explicit design; increasing replicas from one to three is not sufficient:
 
-- 数据从 SQLite 迁移到 PostgreSQL。
-- 使用数据库 advisory lock 或租约实现唯一调度 leader。
-- API 可多副本，所有变更使用乐观锁和幂等操作。
-- SSH 凭证改用外部 Secret Manager 或加密密钥服务。
-- Traefik ACME 文件存储并非分布式存储；在没有外部证书控制器前，Traefik 保持单 ACME 写入实例。
+- Migrate state from SQLite to PostgreSQL.
+- Elect a single scheduler using a database advisory lock or lease.
+- Allow multiple API replicas while protecting all mutations with optimistic locking and idempotency.
+- Move SSH credentials to an external secret manager or encryption-key service.
+- Keep a single ACME writer until Traefik certificate storage is replaced with a distributed solution.
 
-## 4. 核心模块
+## 4. Core Modules
 
-### 4.1 Bootstrap 安装器
+### 4.1 Bootstrap Installer
 
-职责：
+Responsibilities:
 
-- 支持 Ubuntu/Debian 首发；RHEL 系发行版作为下一阶段。
-- 使用发行版包管理器和 Docker 官方软件源安装，不以静态二进制作为生产默认方案。
-- 将用户输入的“Engine 语义版本”映射为各发行版的软件包版本字符串。
-- 支持 `--dry-run`，只输出检查结果和即将执行的动作。
-- 根目录提供 `install.sh`，正式版本将它作为 GitHub Release asset 发布，支持 `curl -fsSL <release-url>/install.sh | sudo bash`。
-- 支持 `--docker-version`、`--advertise-addr`、`--web-port`、`--dock-weaver-version` 和 `--dry-run` 等非交互参数。
-- 支持中断后重新执行；已完成动作必须幂等。
-- 记录非敏感安装日志，失败时输出明确恢复命令。
-- 启动 Swarm service 后轮询 `/health/ready`；只有 Web 已可访问才报告成功。
-- 成功输出准确的 `/setup` URL 和一次性初始化令牌；令牌不得进入普通日志。
-- 所有下载的发布资产验证 checksum 或签名，并为希望审查脚本的用户提供分步安装文档。
+- Initially support Ubuntu and Debian; add RHEL-family distributions later.
+- Install through the distribution package manager and Docker's official repositories rather than static production binaries.
+- Map the requested Engine semantic version to the distribution-specific package version.
+- Provide `--dry-run` to report checks and planned changes without mutation.
+- Publish root-level `install.sh` as a GitHub Release asset for the `curl -fsSL <release-url>/install.sh | sudo bash` flow.
+- Support non-interactive `--docker-version`, `--advertise-addr`, `--web-port`, `--dock-weaver-version`, and `--dry-run` options.
+- Be safe to rerun after interruption by detecting completed work.
+- Record only non-sensitive installation logs and print a clear resume command after failure.
+- Poll `/health/ready` after deploying the Swarm service.
+- Print the exact setup URL and one-time token only after the Web UI is available.
+- Verify every downloaded release asset and document a reviewable installation flow.
 
-版本策略：
+Version policy:
 
-- 集群保存一个 `desired_docker_version`。
-- 所有新节点必须先通过“版本在该发行版可用”的检查。
-- MVP 要求同一 Linux 发行版家族；跨发行版时允许 Engine 版本一致，但软件包版本字符串可以不同。
-- 升级采用逐节点 drain → 升级 → 验证 → active，Manager 始终保持 quorum。
-- 降级默认禁止，需要单独的危险操作确认和备份检查。
+- Store a cluster-wide `desired_docker_version`.
+- Verify that the desired version is available for every new node's distribution.
+- Initially require the same distribution family. Cross-family nodes may use different package strings only when the Engine version matches.
+- Upgrade nodes sequentially through drain → upgrade → verify → active while preserving Manager quorum.
+- Disable downgrades by default and require a separate dangerous-action confirmation and backup check.
 
-### 4.2 SSH 节点执行器
+### 4.2 SSH Node Executor
 
-职责：
+Responsibilities:
 
-- 首次连接显示主机指纹，由用户确认后写入 known hosts。
-- 采集 `/etc/os-release`、架构、内核、磁盘、内存、IP、时间同步和现有 Docker 状态。
-- 上传带校验和的临时脚本或逐条执行经过白名单化的命令。
-- 对每个阶段设置超时、取消和重试策略。
-- 远端输出实时推送到页面，但过滤密码、私钥、registry token、join token。
-- 完成或失败后删除远端临时文件。
+- Show the host-key fingerprint on first connection and write it to known hosts only after confirmation.
+- Collect `/etc/os-release`, architecture, kernel, disk, memory, IP, time synchronization, and existing Docker state.
+- Upload checksum-verified temporary scripts or execute individually allowlisted commands.
+- Apply bounded timeouts, cancellation, and retry policy to every stage.
+- Stream redacted output while filtering passwords, private keys, registry tokens, and join tokens.
+- Delete remote temporary files after success or failure.
 
-SSH 密码不建议长期保存。私钥如需保存，必须使用实例主密钥进行 envelope encryption；主密钥通过 Docker secret 注入，不写入 SQLite 和镜像。
+SSH passwords should not be retained. Persisted private keys require envelope encryption with an instance master key supplied through a Docker secret, never stored in SQLite or the image.
 
-### 4.3 Swarm 管理器
+### 4.3 Swarm Manager
 
-功能：
+Capabilities:
 
-- 初始化、查看和更新 Swarm 基础配置。
-- 添加、删除、提升、降级和 drain 节点。
-- 展示 Leader、Reachable、Ready、Availability 和 Engine 版本。
-- 管理 node labels。
-- 管理 overlay 网络、configs 和 secrets。
-- 查询 service、task、event，并映射为用户可理解的状态。
-- 对 manager 变更执行 quorum 保护。
+- Initialize, inspect, and update Swarm configuration.
+- Add, remove, promote, demote, drain, and activate nodes.
+- Display Leader, Reachable, Ready, Availability, and Engine-version state.
+- Manage node labels, overlay networks, configs, and secrets.
+- Query services, tasks, and events and translate them into operator-facing state.
+- Protect quorum before Manager mutations.
 
-保护规则：
+Safety rules:
 
-- Manager 推荐 1、3 或 5 个，不建议 2 或 4 个。
-- 任何降级、删除、重启或升级 Manager 的操作前都计算剩余 quorum。
-- 无法保持 quorum 时禁止执行并明确说明原因。
-- join token 仅在添加节点动作开始时读取，传输后立即从内存清除，不持久化、不记录；支持操作后轮换。
+- Recommend 1, 3, or 5 Managers rather than 2 or 4.
+- Calculate remaining quorum before demotion, removal, restart, or upgrade.
+- Reject any operation that cannot preserve quorum and explain why.
+- Read a join token only when an enrollment starts, clear it from memory after transmission, never persist or log it, and support rotation after use.
 
-### 4.4 Traefik 管理器
+### 4.4 Traefik Manager
 
-初始部署内容：
+Initial deployment:
 
-- 创建 `traefik-public` attachable overlay 网络。
-- 部署 Traefik Swarm provider，`exposedByDefault=false`。
-- Traefik 约束到入口 Manager 节点，因为 Swarm API 位于 Manager。
-- 发布 80/443；Dashboard 默认不直接暴露公网。
-- 为 ACME 存储创建权限受限的持久目录。
-- 配置 HTTP 到 HTTPS 重定向、安全响应头和可选 Dashboard 鉴权。
+- Create an attachable `traefik-public` overlay network.
+- Deploy Traefik's Swarm provider with `exposedByDefault=false`.
+- Constrain Traefik to an ingress Manager because the Swarm API is available on Managers.
+- Publish ports 80 and 443; do not expose the dashboard publicly by default.
+- Provide restricted persistent ACME storage.
+- Configure HTTP-to-HTTPS redirection, security headers, and optional dashboard authentication.
 
-自动 HTTPS 前置条件：
+Automatic HTTPS prerequisites:
 
-- 域名 A/AAAA 记录指向能接收 Traefik 80/443 流量的公网地址。
-- 防火墙或云安全组允许 80/443。
-- HTTP-01 需要 80 可从公网访问；若做泛域名或 80 不可用，则使用 DNS-01。
-- MVP 推荐 HTTP-01，Traefik 单副本负责 ACME，避免多个实例同时写 `acme.json`。
-- 证书申请失败要显示 DNS 解析、端口探测、速率限制和 challenge 日志，但不泄露账户密钥。
+- The domain A/AAAA record points to an address receiving Traefik traffic on ports 80 and 443.
+- Firewalls and cloud security groups allow ports 80 and 443.
+- HTTP-01 requires public port 80. Wildcard domains or blocked port 80 require DNS-01.
+- The MVP uses HTTP-01 with one Traefik ACME writer to avoid concurrent `acme.json` writes.
+- Certificate errors expose DNS, connectivity, rate-limit, and challenge diagnostics without exposing account keys.
 
-业务服务在 Swarm 模式下将 Traefik labels 写在 service 的 `deploy.labels`，并显式提供容器内部端口。例如生成：
+In Swarm mode, Traefik labels belong to the service, and the internal container port is explicit:
 
 ```yaml
 deploy:
@@ -281,25 +284,25 @@ deploy:
     - traefik.http.services.demo.loadbalancer.server.port=8080
 ```
 
-### 4.5 应用与部署管理器
+### 4.5 Application and Deployment Manager
 
-领域对象分为三层：
+The domain model has three layers:
 
-- Application：用户视角的应用。
-- Deployment Spec：期望状态，包括镜像、资源、路由和升级策略。
-- Release：一次不可变部署记录，保存操作者、时间、输入、最终 digest、结果和回滚来源。
+- Application: the operator-facing application.
+- Deployment Spec: desired image, resources, routing, and update policy.
+- Release: immutable deployment record containing actor, time, input, final digest, result, and rollback source.
 
-推荐更新默认值：
+Recommended update defaults:
 
 - `parallelism=1`
 - `order=start-first`
-- 单任务健康后再进入下一批
+- Wait for each task to become healthy before starting the next batch.
 - `failure_action=rollback`
-- 设置 monitor window 和最大失败比例
+- Explicit monitor window and maximum failure ratio.
 
-必须允许用户在资源不足或端口冲突场景下选择 `stop-first`。
+Operators must be able to select `stop-first` when capacity or port conflicts prevent `start-first`.
 
-部署状态机：
+Deployment state machine:
 
 ```text
 DRAFT → VALIDATING → DEPLOYING → VERIFYING → SUCCEEDED
@@ -307,43 +310,43 @@ DRAFT → VALIDATING → DEPLOYING → VERIFYING → SUCCEEDED
              VERIFYING → ROLLING_BACK → ROLLED_BACK / ROLLBACK_FAILED
 ```
 
-服务端负责状态推进，刷新浏览器不会中断任务。相同幂等键的重复请求只能产生一个 Release。
+The server owns state transitions, so browser refresh does not cancel work. Requests sharing an idempotency key can create only one Release.
 
-### 4.6 认证、授权与审计
+### 4.6 Authentication, Authorization, and Audit
 
-MVP 角色：
+MVP roles:
 
-- Owner：系统设置、用户管理和全部操作。
-- Operator：节点维护、部署、回滚和扩缩容。
-- Viewer：只读。
+- Owner: settings, users, and all operations.
+- Operator: node maintenance, deployment, rollback, and scaling.
+- Viewer: read-only access.
 
-安全要求：
+Security requirements:
 
-- 密码使用现代密码哈希算法并设置合理成本。
-- 登录 session 使用 HttpOnly、Secure、SameSite Cookie，所有变更请求启用 CSRF 防护。
-- 支持登录限速、短时锁定和 session 撤销。
-- registry 密码、SSH 凭证、ACME 密钥和 Docker secrets 加密保存或外部注入。
-- Docker socket 等同 root 权限；Dock-Weaver 容器不得与普通业务容器共享不必要权限，并限制只有控制 service 可访问。
-- 所有节点变更、部署、回滚、secret 变更和登录事件写入不可由普通用户修改的审计日志。
+- Use a modern password hash with an appropriate cost.
+- Use HttpOnly, Secure, SameSite session cookies and CSRF protection on every mutation.
+- Provide login rate limiting, temporary lockout, and session revocation.
+- Encrypt registry passwords, SSH credentials, ACME keys, and application secrets or inject them externally.
+- Treat the Docker socket as root-equivalent and restrict it to the control service.
+- Write node, deployment, rollback, secret, and login actions to an audit log ordinary users cannot modify.
 
-## 5. 页面规划
+## 5. Page Plan
 
-| 页面 | 首版主要内容 |
+| Page | First-release content |
 |---|---|
-| 初始化向导 | 管理员、集群地址、镜像仓库、Traefik、健康检查 |
-| 总览 | 节点健康、Manager quorum、服务/副本状态、最近部署、证书告警 |
-| 节点列表 | 角色、状态、可用性、Docker 版本、资源、标签、操作 |
-| 添加节点 | SSH 配置、主机指纹、预检、安装和入群分步日志 |
-| 应用列表 | 当前版本、副本健康、域名、最近部署结果 |
-| 新建/编辑应用 | 镜像、版本、端口、资源、环境变量、secrets、域名、升级策略 |
-| Release 详情 | 规格差异、任务时间线、日志、健康验证、回滚 |
-| Traefik/证书 | 入口点、域名、证书状态、过期时间、challenge 检查 |
-| 集群资源 | Networks、Configs、Secrets；secret 只能创建/替换，不能回显 |
-| 系统设置 | 用户、镜像仓库、SSH 凭证、备份、审计、版本策略 |
+| Setup wizard | Owner, cluster address, registry, Traefik, health checks |
+| Overview | Node health, Manager quorum, service replicas, recent releases, certificate alerts |
+| Nodes | Role, status, availability, Docker version, resources, labels, actions |
+| Add node | SSH settings, fingerprint, preflight, installation, join progress |
+| Applications | Current version, replica health, domain, latest release result |
+| Create/edit application | Image, version, port, resources, environment, secrets, domain, update policy |
+| Release details | Spec diff, timeline, logs, health verification, rollback |
+| Traefik/certificates | Entrypoints, domains, certificate state, expiry, challenge checks |
+| Cluster resources | Networks, configs, and secrets; secret values are never displayed |
+| System settings | Users, registries, SSH credentials, backup, audit, version policy |
 
-## 6. 数据模型草案
+## 6. Draft Data Model
 
-| 表 | 关键字段 |
+| Table | Key fields |
 |---|---|
 | `users` | id, username, password_hash, role, disabled_at |
 | `sessions` | id, user_id, token_hash, expires_at, revoked_at |
@@ -358,9 +361,9 @@ MVP 角色：
 | `registry_credentials` | id, registry, username, encrypted_secret |
 | `audit_events` | id, actor_id, action, resource_type, resource_id, redacted_detail |
 
-SQLite 迁移必须带 schema version；所有 JSON 规格需保存自身版本号，为后续字段升级保留转换路径。
+SQLite migrations must carry schema versions. Every stored JSON specification carries its own version to permit future conversion.
 
-## 7. API 草案
+## 7. Draft API
 
 ```text
 POST   /api/v1/setup/complete
@@ -397,200 +400,200 @@ GET    /api/v1/certificates
 GET    /api/v1/audit-events
 ```
 
-长任务接口立即返回 operation/release ID；页面通过 SSE 订阅事件。所有创建部署、节点操作和回滚 API 接收 `Idempotency-Key`。
+Long-running mutation endpoints immediately return an operation or release ID. The UI subscribes to events over SSE. Every node operation, deployment, and rollback accepts `Idempotency-Key`.
 
-## 8. 网络与基础设施要求
+## 8. Network and Infrastructure Requirements
 
-在加入节点前，预检以下连通性：
+Preflight checks these paths before joining a node:
 
-| 方向 | 端口 | 用途 |
+| Direction | Port | Purpose |
 |---|---:|---|
-| 管理端到目标主机 | SSH 端口，默认 22/TCP | 安装与维护 |
-| Swarm 节点之间 | 2377/TCP | Manager 控制面 |
-| Swarm 节点之间 | 7946/TCP + UDP | 节点发现与通信 |
-| Swarm 节点之间 | 4789/UDP | overlay 数据面 |
-| 公网到入口节点 | 80/TCP | HTTP 与 ACME HTTP-01 |
-| 公网到入口节点 | 443/TCP | HTTPS |
-| 节点到外部 | 443/TCP | 软件源、镜像仓库、ACME API |
+| Control plane to target | SSH port, 22/TCP by default | Installation and maintenance |
+| Between Swarm nodes | 2377/TCP | Manager control plane |
+| Between Swarm nodes | 7946/TCP + UDP | Discovery and communication |
+| Between Swarm nodes | 4789/UDP | Overlay data plane |
+| Internet to ingress | 80/TCP | HTTP and ACME HTTP-01 |
+| Internet to ingress | 443/TCP | HTTPS |
+| Nodes to external services | 443/TCP | Package repositories, registries, ACME API |
 
-安全组检查不能只验证本机监听，还应尽可能从 Manager 和目标节点双向验证。`4789/UDP` 不应直接暴露给不可信公网。
+Security-group checks must go beyond local listening sockets and test both Manager-to-node and node-to-Manager connectivity where possible. Port `4789/UDP` must never be exposed directly to an untrusted public network.
 
-## 9. 失败处理与可恢复性
+## 9. Failure Handling and Recovery
 
-### 9.1 添加节点失败
+### 9.1 Node Enrollment Failure
 
-- SSH/指纹失败：不执行远端变更。
-- Docker 版本不可用：停止在安装前，展示该发行版的候选版本。
-- Docker 安装成功但 join 失败：保留 Docker，撤销临时文件，允许只重试 join。
-- join 成功但 Manager 未看到 Ready：采集 daemon、时间同步、端口和证书状态，不自动重复 join。
+- SSH or fingerprint failure: make no remote changes.
+- Docker version unavailable: stop before installation and show distribution candidates.
+- Docker installed but join failed: retain Docker, remove temporary files, and allow a join-only retry.
+- Join succeeded but Manager does not report Ready: collect daemon, time, port, and certificate state; do not repeat join automatically.
 
-### 9.2 部署失败
+### 9.2 Deployment Failure
 
-- 镜像不存在或无权限：验证阶段失败，不改变线上服务。
-- 新任务不能启动：展示 Swarm task error、资源和 placement 约束。
-- 健康检查失败：按配置暂停或回滚。
-- 回滚也失败：保留失败现场，标记 `ROLLBACK_FAILED`，不制造“已恢复”的假象。
+- Image missing or unauthorized: fail during validation without changing the live service.
+- New task cannot start: expose Swarm task errors, resources, and placement constraints.
+- Health check fails: pause or roll back according to policy.
+- Rollback also fails: preserve evidence and mark `ROLLBACK_FAILED`; never claim recovery.
 
-### 9.3 控制节点故障
+### 9.3 Control-Node Failure
 
-- 已运行的 Swarm tasks 继续由 Swarm 维护；若 Manager quorum 丢失，则不能执行新的管理操作。
-- 定期备份 SQLite、实例加密密钥材料和 `/var/lib/docker/swarm`；Swarm 状态备份需要遵循一致性要求。
-- 恢复文档必须覆盖：恢复 Dock-Weaver、恢复单 Manager、重建 quorum、重新验证 Traefik 和证书。
+- Existing tasks continue under Swarm. When Manager quorum is lost, new management operations are unavailable.
+- Back up SQLite, instance encryption material, and `/var/lib/docker/swarm`; Swarm backups must follow consistency requirements.
+- Recovery documentation must cover Dock-Weaver restoration, single-Manager restoration, quorum reconstruction, and Traefik/certificate verification.
 
-## 10. 可观测性
+## 10. Observability
 
-MVP 指标：
+MVP signals:
 
-- 节点 Ready/Down、Manager reachability、quorum 风险。
-- service desired/running/failed replicas。
-- deployment duration、success/failure/rollback 数量。
-- SSH 操作时长和错误分类。
-- 证书剩余有效期、最近续期结果。
-- Docker/Traefik/Dock-Weaver 版本分布。
+- Node Ready/Down state, Manager reachability, and quorum risk.
+- Desired, running, and failed service replicas.
+- Deployment duration and success, failure, and rollback counts.
+- SSH operation duration and error classes.
+- Certificate lifetime and latest renewal result.
+- Docker, Traefik, and Dock-Weaver version distribution.
 
-提供 `/health/live`、`/health/ready` 和 Prometheus `/metrics`。日志关联 `request_id`、`operation_id`、`release_id`，禁止写入 secret 值。
+Expose `/health/live`, `/health/ready`, and Prometheus `/metrics`. Correlate logs with `request_id`, `operation_id`, and `release_id`, and never log secret values.
 
-## 11. 开发阶段与里程碑
+## 11. Development Phases and Milestones
 
-### Phase 0：工程骨架与设计冻结
+### Phase 0: Engineering Foundation and Design Freeze
 
-交付：
+Deliverables:
 
-- Go API、嵌入式前端、SQLite migrations、基础认证。
-- 领域模型、错误码规范、任务状态机和脱敏库。
-- 开发环境中的多节点 Swarm 测试脚本。
+- Go API, embedded frontend, SQLite migrations, and basic authentication.
+- Domain models, error-code conventions, operation state machine, and redaction library.
+- Multi-node Swarm test scripts for development.
 
-验收：可以登录 Web 页面，持久化配置并查看空集群状态。
+Acceptance: an operator can sign in, persist configuration, and view cluster state.
 
-### Phase 1：首节点安装与集群只读
+### Phase 1: First-Node Installation and Read-Only Cluster
 
-交付：
+Deliverables:
 
-- Ubuntu/Debian 安装器，可选并固定 Docker 版本。
-- 初始化 Swarm并以 service 启动 Dock-Weaver。
-- 节点、服务、任务、网络只读页面。
+- Ubuntu/Debian installer with optional pinned Docker version.
+- Swarm initialization and Dock-Weaver service deployment.
+- Read-only node, service, task, and network views.
 
-验收：在干净主机上从零安装后，浏览器可访问 Dock-Weaver，并能正确显示单 Manager Swarm。
+Acceptance: a clean host can be installed from scratch and the browser correctly displays a single-Manager Swarm.
 
-### Phase 2：SSH 添加节点
+### Phase 2: SSH Node Enrollment
 
-交付：
+Deliverables:
 
-- SSH 凭证、known-hosts、预检、远程安装、join 和分步日志。
-- Worker/Manager 角色、节点标签、drain/activate/remove。
-- Docker 版本一致性告警和 quorum 保护。
+- SSH credentials, known hosts, preflight, remote installation, join, and step logs.
+- Worker/Manager role, node labels, drain/activate/remove.
+- Docker version-consistency alerts and quorum protection.
 
-验收：两台干净主机可从页面加入；失败可定位、可安全重试，日志无敏感信息。
+Acceptance: two clean hosts can be joined from the Web UI; failures are diagnosable and safely retryable with no sensitive log output.
 
-### Phase 3：Traefik 与自动 HTTPS
+### Phase 3: Traefik and Automatic HTTPS
 
-交付：
+Deliverables:
 
-- `traefik-public` 网络和 Traefik stack/service。
-- HTTP-01 自动证书、HTTP→HTTPS、域名预检和证书状态页面。
-- Dashboard 的安全访问方式。
+- `traefik-public` network and Traefik service.
+- HTTP-01 certificates, HTTP-to-HTTPS redirect, domain preflight, and certificate status.
+- A secure dashboard access method.
 
-验收：配置 DNS 后部署测试服务，可通过有效 HTTPS 域名访问，重启 Traefik 后证书仍存在。
+Acceptance: after DNS is configured, a test service is available through a valid HTTPS domain and certificates survive Traefik restart.
 
-### Phase 4：应用部署、升级与回滚
+### Phase 4: Application Deployment, Upgrade, and Rollback
 
-交付：
+Deliverables:
 
-- 简单部署表单、私有 registry、secrets/configs。
-- image tag/digest 校验、滚动更新、健康验证、失败回滚。
-- Release 历史、规格 diff 和 SSE 实时事件。
+- Simple deployment form, private registry, secrets/configs.
+- Image tag/digest validation, rolling updates, health verification, rollback.
+- Release history, specification diff, and SSE events.
 
-验收：可从 `1.0.0` 升级到 `1.1.0`；模拟健康失败后自动恢复到旧版本；重复点击不会重复创建部署。
+Acceptance: upgrade from `1.0.0` to `1.1.0`; a simulated health failure restores the prior version; repeated clicks do not duplicate a deployment.
 
-### Phase 5：生产加固
+### Phase 5: Production Hardening
 
-交付：
+Deliverables:
 
-- RBAC、审计、备份恢复、指标、告警。
-- 节点滚动升级 Docker。
-- RHEL 系支持、DNS-01 插件、Webhook/API token。
-- 安全审计与端到端故障演练。
+- RBAC, audit, backup/restore, metrics, and alerts.
+- Rolling Docker upgrades across nodes.
+- RHEL-family support, DNS-01 plugins, webhooks, and API tokens.
+- Security audit and end-to-end failure exercises.
 
-验收：完成 Manager 故障、节点断网、镜像不可用、证书失败、数据库恢复和升级中断演练。
+Acceptance: complete exercises for Manager failure, node isolation, registry outage, certificate failure, database restoration, and interrupted upgrades.
 
-## 12. 测试策略
+## 12. Test Strategy
 
-- 单元测试：版本解析、规格生成、状态机、quorum 计算、secret 脱敏、权限判断。
-- 集成测试：Docker API、registry manifest、SQLite migration、SSH 执行器。
-- 端到端测试：用 3 个隔离 Linux 环境组成 Swarm，覆盖安装、join、Traefik、部署、升级、回滚和移除。
-- 幂等测试：在每个安装/部署阶段强制中断后重新执行。
-- 安全测试：主机指纹变化、命令注入、CSRF、弱密码、越权、secret 日志泄漏。
-- 兼容测试：支持矩阵中的发行版、架构和 Docker Engine 版本。
-- 故障测试：Manager 下线、丢失 quorum、Worker 下线、registry 超时、ACME 不可达。
+- Unit tests: version parsing, specification generation, state machines, quorum calculations, secret redaction, authorization.
+- Integration tests: Docker API, registry manifests, SQLite migrations, SSH executor.
+- End-to-end tests: a three-node isolated Linux Swarm covering install, join, Traefik, deploy, upgrade, rollback, and removal.
+- Idempotency tests: interrupt and resume every installation and deployment stage.
+- Security tests: changed host keys, command injection, CSRF, weak passwords, privilege escalation, and secret leakage.
+- Compatibility tests: supported distributions, architectures, and Docker Engine versions.
+- Failure tests: Manager loss, quorum loss, Worker loss, registry timeout, and ACME outage.
 
-## 13. MVP 完成定义
+## 13. MVP Definition of Done
 
-以下条件全部满足才算 MVP 完成：
+The MVP is complete only when all of these conditions are satisfied:
 
-1. 用户能在支持的干净 Linux 主机上选择 Docker 版本并完成首个 Manager 安装。
-2. 用户能通过 Web + SSH 添加至少两个节点，所有节点 Docker Engine 版本符合策略且状态为 Ready。
-3. 用户能部署带域名的镜像版本，Traefik 自动获得有效证书并提供 HTTPS。
-4. 用户能升级镜像版本、看到实时过程，并在失败时自动或手动回滚。
-5. Manager quorum、端口、防火墙、DNS、镜像和证书问题都有明确诊断。
-6. SSH、registry、join token、session 和应用 secret 不以明文写入数据库或日志。
-7. 安装、节点纳管和部署操作均可重试且具备幂等性。
-8. 有可执行的备份恢复文档，并至少完成一次恢复演练。
+1. An operator can choose a Docker version and install the first Manager on a supported clean Linux host.
+2. An operator can add at least two nodes through Web + SSH; every node satisfies the Engine-version policy and reaches Ready.
+3. An operator can deploy an explicit image version with a domain, and Traefik obtains a valid certificate and serves HTTPS.
+4. An operator can upgrade an image, observe real-time progress, and trigger or receive rollback after failure.
+5. Quorum, ports, firewalls, DNS, images, and certificate failures have actionable diagnostics.
+6. SSH, registry, join-token, session, and application secrets never appear as plaintext in the database or logs.
+7. Installation, enrollment, and deployment operations are retryable and idempotent.
+8. Executable backup/restore documentation exists and at least one recovery exercise has succeeded.
 
-## 14. 已确定的关键决策
+## 14. Confirmed Architectural Decisions
 
-| 决策 | 选择 | 原因 |
+| Decision | Choice | Reason |
 |---|---|---|
-| 控制面形态 | Go 单二进制 + 内嵌 SPA | 安装简单、资源占用低、适合 Manager 节点 |
-| 节点纳管 | Agentless SSH | 用户无需预装 agent，适合小集群 |
-| 首版数据存储 | SQLite + 单控制副本 | 降低 MVP 运维复杂度 |
-| Docker 安装 | 官方仓库 + 包管理器 | 可固定版本并保留安全更新路径 |
-| 应用编排 | Swarm service/stack | 与产品目标一致，保留 Compose 心智模型 |
-| 入口网关 | Traefik Swarm provider | 通过 service labels 自动发现路由 |
-| MVP ACME | HTTP-01 + 单 Traefik 副本 | 文件型 ACME 存储不适合并发写入 |
-| 部署版本 | tag 输入、digest 落库 | 兼顾易用性和可重复部署 |
-| 长任务反馈 | 持久化任务 + SSE | 刷新不丢任务，页面可实时显示过程 |
+| Control plane | Go single binary + embedded SPA | Simple installation and low Manager-node overhead |
+| Node enrollment | Agentless SSH | No preinstalled agent; appropriate for small clusters |
+| Initial persistence | SQLite + one control replica | Lower MVP operational complexity |
+| Docker installation | Official repositories + package manager | Supports pinned versions and a secure update path |
+| Application orchestration | Swarm services/stacks | Matches the product and preserves the Compose mental model |
+| Ingress | Traefik Swarm provider | Discovers routes from service labels |
+| MVP ACME | HTTP-01 + one Traefik replica | File-backed ACME storage is not safe for concurrent writers |
+| Deployment version | Tag as input, digest in storage | Balances usability and repeatability |
+| Long-running feedback | Durable operations + SSE | Work survives refresh while the UI receives live events |
 
-## 15. 开始编码前仍需确认的产品选择
+## 15. Product Choices to Freeze Before Their Phase
 
-这些问题不阻塞架构规划，但应在对应 Phase 开始前冻结：
+These choices do not block the architecture, but each must be resolved before its implementation phase:
 
-1. 首发只支持 Ubuntu，还是同时支持 Debian。
-2. Dock-Weaver 首次访问是使用 `IP:8080`，还是安装时就要求提供管理域名。
-3. SSH 密码是否允许持久保存，还是只允许单次使用。
-4. 简单部署表单是否需要同时支持多 service 应用；本规划建议 MVP 一个应用可包含一个 service，高级用户使用 Stack YAML。
-5. 私有 registry 首发范围是通用 Registry V2，还是额外适配特定厂商。
-6. 是否需要从现有 Swarm 导入并接管已有 service；本规划建议先只读展示，用户确认后再纳入 Application/Release 模型。
+1. Whether the first release supports Ubuntu only or Ubuntu and Debian.
+2. Whether first access uses `IP:8080` or requires a management domain during installation.
+3. Whether SSH passwords may be persisted or are always single-use.
+4. Whether the simple form supports multi-service applications. The current recommendation is one service per application, with Stack YAML for advanced use.
+5. Whether the first private-registry implementation targets generic Registry V2 only or adds vendor-specific integrations.
+6. Whether existing Swarm services can be imported and managed. The recommendation is read-only discovery followed by explicit adoption.
 
-## 16. 实施参考
+## 16. Implementation References
 
-- Docker Engine 支持从官方软件源列出并安装指定软件包版本，安装器应按发行版查询候选版本，而不是维护一张易过期的硬编码列表。
-- Swarm 的 worker/manager join token 是敏感凭据；节点只在加入时需要它，Dock-Weaver 应按需读取并避免持久化。
-- Swarm 节点间默认需要开放 `2377/TCP`、`7946/TCP+UDP` 和 `4789/UDP`。
-- Manager 使用 Raft quorum，生产环境通常采用奇数个 Manager；失去 quorum 后现有 task 可能继续运行，但管理和调度操作不可用。
-- Traefik 的 Swarm provider 从 service labels 读取路由配置；在 Swarm 中必须显式配置后端容器端口。
-- Traefik ACME resolver 的文件存储不是分布式存储，因此首版自动证书组件按单写入实例设计。
+- Docker's official repositories list installable package versions; installers should query candidates instead of maintaining an expiring hard-coded table.
+- Worker and Manager join tokens are sensitive and needed only during enrollment; read them on demand and never persist them.
+- Swarm nodes normally require `2377/TCP`, `7946/TCP+UDP`, and `4789/UDP` between nodes.
+- Managers use Raft quorum, so production clusters normally use an odd number. Existing tasks may continue after quorum loss, but scheduling and management stop.
+- Traefik's Swarm provider reads service labels, and the backend container port must be explicit.
+- Traefik's file ACME store is not distributed, so the first release uses a single certificate writer.
 
-官方资料：
+Official references:
 
-- [Docker：安装指定版本的 Docker Engine](https://docs.docker.com/engine/install/ubuntu/)
-- [Docker：运行 Swarm Mode](https://docs.docker.com/engine/swarm/swarm-mode/)
-- [Docker：Swarm 网络与端口](https://docs.docker.com/engine/swarm/networking/)
-- [Docker：维护 Manager quorum](https://docs.docker.com/engine/swarm/admin_guide/)
-- [Traefik：Docker Swarm Provider](https://doc.traefik.io/traefik/reference/install-configuration/providers/swarm/)
-- [Traefik：Certificate Resolver](https://doc.traefik.io/traefik/reference/install-configuration/tls/certificate-resolvers/overview/)
+- [Docker: Install a specific Docker Engine version](https://docs.docker.com/engine/install/ubuntu/)
+- [Docker: Run Swarm mode](https://docs.docker.com/engine/swarm/swarm-mode/)
+- [Docker: Swarm networking and ports](https://docs.docker.com/engine/swarm/networking/)
+- [Docker: Maintain Manager quorum](https://docs.docker.com/engine/swarm/admin_guide/)
+- [Traefik: Docker Swarm provider](https://doc.traefik.io/traefik/reference/install-configuration/providers/swarm/)
+- [Traefik: Certificate resolvers](https://doc.traefik.io/traefik/reference/install-configuration/tls/certificate-resolvers/overview/)
 
-## 17. 开源与许可证
+## 17. Open Source and License
 
-Dock-Weaver 是永久免费、完整开源的自托管项目，使用 `AGPL-3.0-only` 许可证。
+Dock-Weaver is permanently free, fully open-source, and self-hosted under `AGPL-3.0-only`.
 
-项目原则：
+Project principles:
 
-- 不按服务器、Swarm 节点、用户或应用数量收费。
-- 节点安装、集群管理、Traefik、自动 HTTPS、部署、滚动更新和回滚属于免费核心能力。
-- 不要求连接 Dock-Weaver 官方云服务才能运行。
-- 默认不启用未经用户明确同意的遥测，不采集服务器凭证、应用 secrets 或业务数据。
-- 官方容器镜像必须能够从公开源代码和发布标签重现。
-- Web 页面应提供清晰的源代码入口，并显示运行版本和构建 commit，使使用者能够取得与当前运行版本对应的源代码。
-- 可以通过赞助、托管服务、技术支持、迁移实施、培训和定制开发维持项目发展，但不得让自托管核心功能依赖付费服务。
+- Never charge by server, Swarm node, user, or application count.
+- Node installation, cluster management, Traefik, automatic HTTPS, deployment, rolling updates, and rollback remain free core capabilities.
+- Never require a Dock-Weaver cloud service for core operation.
+- Do not enable telemetry without informed consent, and never collect server credentials, application secrets, or business data.
+- Official container images must be reproducible from public source and release tags.
+- The Web UI must expose a clear source-code link and the running version/commit so users can obtain corresponding source.
+- Sponsorship, hosted services, support, migration work, training, and custom development may fund the project, but self-hosted core features must not depend on a paid service.
 
-仓库根目录的 `AGENTS.md` 是实现阶段的技术栈和工程约束来源；架构决定发生变化时，应同时更新该文件和本规划。
+The root [AGENTS.md](../AGENTS.md) defines the implementation stack and engineering constraints. Update both that file and this plan whenever an architectural decision changes.

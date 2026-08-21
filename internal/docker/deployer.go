@@ -1,0 +1,259 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+package docker
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strconv"
+	"time"
+
+	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/api/types/swarm"
+	"github.com/moby/moby/client"
+
+	"github.com/ranen/dock-weaver/internal/domain"
+)
+
+const (
+	ingressNetworkName = "traefik-public"
+	traefikServiceName = "dock-weaver-traefik"
+	traefikVolumeName  = "dock-weaver-traefik-acme"
+	traefikImage       = "traefik:v3.7.1"
+)
+
+func (i *Inspector) Deploy(
+	ctx context.Context,
+	spec domain.DeploymentSpec,
+) (domain.DeploymentResult, error) {
+	requestCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+
+	networkID, err := i.ensureIngressNetwork(requestCtx)
+	if err != nil {
+		return domain.DeploymentResult{}, err
+	}
+	if err := i.ensureTraefik(requestCtx, networkID, spec.ACMEEmail); err != nil {
+		return domain.DeploymentResult{}, err
+	}
+
+	image := spec.Image + ":" + spec.Version
+	serviceSpec := applicationServiceSpec(spec, image, networkID)
+	inspected, err := i.client.ServiceInspect(
+		requestCtx,
+		spec.ServiceName,
+		client.ServiceInspectOptions{},
+	)
+	if err != nil && !cerrdefs.IsNotFound(err) {
+		return domain.DeploymentResult{}, fmt.Errorf("inspect service: %w", err)
+	}
+	if cerrdefs.IsNotFound(err) {
+		created, createErr := i.client.ServiceCreate(requestCtx, client.ServiceCreateOptions{
+			Spec:          serviceSpec,
+			QueryRegistry: true,
+		})
+		if createErr != nil {
+			return domain.DeploymentResult{}, fmt.Errorf("create service: %w", createErr)
+		}
+		return domain.DeploymentResult{
+			ServiceID: created.ID,
+			Image:     image,
+			Warnings:  created.Warnings,
+		}, nil
+	}
+	if inspected.Service.Spec.Labels["io.dock-weaver.managed"] != "true" {
+		return domain.DeploymentResult{}, errors.New("a service with this name exists but is not managed by Dock-Weaver")
+	}
+
+	updated, err := i.client.ServiceUpdate(requestCtx, inspected.Service.ID, client.ServiceUpdateOptions{
+		Version:       inspected.Service.Version,
+		Spec:          serviceSpec,
+		QueryRegistry: true,
+	})
+	if err != nil {
+		return domain.DeploymentResult{}, fmt.Errorf("update service: %w", err)
+	}
+	return domain.DeploymentResult{
+		ServiceID: inspected.Service.ID,
+		Image:     image,
+		Updated:   true,
+		Warnings:  updated.Warnings,
+	}, nil
+}
+
+func (i *Inspector) ensureIngressNetwork(ctx context.Context) (string, error) {
+	inspected, err := i.client.NetworkInspect(
+		ctx,
+		ingressNetworkName,
+		client.NetworkInspectOptions{Scope: "swarm"},
+	)
+	if err == nil {
+		if inspected.Network.Driver != "overlay" || inspected.Network.Scope != "swarm" {
+			return "", errors.New("traefik-public exists but is not a Swarm overlay network")
+		}
+		return inspected.Network.ID, nil
+	}
+	if !cerrdefs.IsNotFound(err) {
+		return "", fmt.Errorf("inspect ingress network: %w", err)
+	}
+
+	created, err := i.client.NetworkCreate(ctx, ingressNetworkName, client.NetworkCreateOptions{
+		Driver:     "overlay",
+		Scope:      "swarm",
+		Attachable: true,
+		Labels:     map[string]string{"io.dock-weaver.managed": "true"},
+	})
+	if err != nil {
+		return "", fmt.Errorf("create ingress network: %w", err)
+	}
+	return created.ID, nil
+}
+
+func (i *Inspector) ensureTraefik(ctx context.Context, networkID, acmeEmail string) error {
+	inspected, err := i.client.ServiceInspect(
+		ctx,
+		traefikServiceName,
+		client.ServiceInspectOptions{},
+	)
+	if err == nil {
+		if inspected.Service.Spec.Labels["io.dock-weaver.managed"] != "true" {
+			return errors.New("dock-weaver-traefik exists but is not managed by Dock-Weaver")
+		}
+		configuredEmail := inspected.Service.Spec.Labels["io.dock-weaver.acme-email"]
+		if configuredEmail != acmeEmail {
+			return fmt.Errorf(
+				"Traefik is configured for ACME email %q; use the same email",
+				configuredEmail,
+			)
+		}
+		return nil
+	}
+	if !cerrdefs.IsNotFound(err) {
+		return fmt.Errorf("inspect Traefik service: %w", err)
+	}
+
+	if _, err := i.client.VolumeInspect(ctx, traefikVolumeName, client.VolumeInspectOptions{}); err != nil {
+		if !cerrdefs.IsNotFound(err) {
+			return fmt.Errorf("inspect Traefik ACME volume: %w", err)
+		}
+		if _, err := i.client.VolumeCreate(ctx, client.VolumeCreateOptions{
+			Name:   traefikVolumeName,
+			Labels: map[string]string{"io.dock-weaver.managed": "true"},
+		}); err != nil {
+			return fmt.Errorf("create Traefik ACME volume: %w", err)
+		}
+	}
+
+	if _, err := i.client.ServiceCreate(ctx, client.ServiceCreateOptions{
+		Spec: newTraefikServiceSpec(networkID, acmeEmail),
+	}); err != nil {
+		return fmt.Errorf("create Traefik service: %w", err)
+	}
+	return nil
+}
+
+func newTraefikServiceSpec(networkID, acmeEmail string) swarm.ServiceSpec {
+	replicas := uint64(1)
+	delay := 5 * time.Second
+	return swarm.ServiceSpec{
+		Annotations: swarm.Annotations{
+			Name: traefikServiceName,
+			Labels: map[string]string{
+				"io.dock-weaver.managed":    "true",
+				"io.dock-weaver.acme-email": acmeEmail,
+			},
+		},
+		TaskTemplate: swarm.TaskSpec{
+			ContainerSpec: &swarm.ContainerSpec{
+				Image: traefikImage,
+				Args: []string{
+					"--api.dashboard=false",
+					"--log.level=INFO",
+					"--providers.swarm.endpoint=unix:///var/run/docker.sock",
+					"--providers.swarm.exposedbydefault=false",
+					"--providers.swarm.network=" + ingressNetworkName,
+					"--entrypoints.web.address=:80",
+					"--entrypoints.web.http.redirections.entrypoint.to=websecure",
+					"--entrypoints.web.http.redirections.entrypoint.scheme=https",
+					"--entrypoints.websecure.address=:443",
+					"--certificatesresolvers.letsencrypt.acme.email=" + acmeEmail,
+					"--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json",
+					"--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web",
+				},
+				Mounts: []mount.Mount{
+					{
+						Type: mount.TypeBind, Source: "/var/run/docker.sock",
+						Target: "/var/run/docker.sock", ReadOnly: true,
+					},
+					{Type: mount.TypeVolume, Source: traefikVolumeName, Target: "/letsencrypt"},
+				},
+				ReadOnly: true,
+			},
+			RestartPolicy: &swarm.RestartPolicy{
+				Condition: swarm.RestartPolicyConditionOnFailure,
+				Delay:     &delay,
+			},
+			Placement: &swarm.Placement{Constraints: []string{"node.role == manager"}},
+			Networks:  []swarm.NetworkAttachmentConfig{{Target: networkID}},
+		},
+		Mode: swarm.ServiceMode{Replicated: &swarm.ReplicatedService{Replicas: &replicas}},
+		EndpointSpec: &swarm.EndpointSpec{Ports: []swarm.PortConfig{
+			{
+				Protocol: network.TCP, TargetPort: 80,
+				PublishedPort: 80, PublishMode: swarm.PortConfigPublishModeIngress,
+			},
+			{
+				Protocol: network.TCP, TargetPort: 443,
+				PublishedPort: 443, PublishMode: swarm.PortConfigPublishModeIngress,
+			},
+		}},
+	}
+}
+
+func applicationServiceSpec(spec domain.DeploymentSpec, image, networkID string) swarm.ServiceSpec {
+	replicas := spec.Replicas
+	delay := 5 * time.Second
+	maxAttempts := uint64(3)
+	router := spec.ServiceName
+	return swarm.ServiceSpec{
+		Annotations: swarm.Annotations{
+			Name: spec.ServiceName,
+			Labels: map[string]string{
+				"io.dock-weaver.managed":                                        "true",
+				"traefik.enable":                                                "true",
+				"traefik.swarm.network":                                         ingressNetworkName,
+				"traefik.http.routers." + router + ".rule":                      "Host(`" + spec.Domain + "`)",
+				"traefik.http.routers." + router + ".entrypoints":               "websecure",
+				"traefik.http.routers." + router + ".tls":                       "true",
+				"traefik.http.routers." + router + ".tls.certresolver":          "letsencrypt",
+				"traefik.http.services." + router + ".loadbalancer.server.port": strconv.FormatUint(uint64(spec.Port), 10),
+			},
+		},
+		TaskTemplate: swarm.TaskSpec{
+			ContainerSpec: &swarm.ContainerSpec{Image: image},
+			RestartPolicy: &swarm.RestartPolicy{
+				Condition:   swarm.RestartPolicyConditionOnFailure,
+				Delay:       &delay,
+				MaxAttempts: &maxAttempts,
+			},
+			Networks: []swarm.NetworkAttachmentConfig{{Target: networkID}},
+		},
+		Mode: swarm.ServiceMode{Replicated: &swarm.ReplicatedService{Replicas: &replicas}},
+		UpdateConfig: &swarm.UpdateConfig{
+			Parallelism:     1,
+			FailureAction:   swarm.UpdateFailureActionRollback,
+			Monitor:         30 * time.Second,
+			MaxFailureRatio: 0,
+			Order:           swarm.UpdateOrderStartFirst,
+		},
+		RollbackConfig: &swarm.UpdateConfig{
+			Parallelism:   1,
+			FailureAction: swarm.UpdateFailureActionPause,
+			Monitor:       30 * time.Second,
+			Order:         swarm.UpdateOrderStopFirst,
+		},
+	}
+}
