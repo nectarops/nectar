@@ -78,6 +78,18 @@ On the first application deployment, Dock-Weaver creates Traefik and the `traefi
 
 Prerequisites are Go 1.26, Node.js 24, pnpm 11, and Docker for integration testing.
 
+For a one-command local preview, run:
+
+```bash
+make dev
+```
+
+The development launcher installs the pinned web dependencies, builds the embedded React application and Go binary, creates an isolated database under the system temporary directory, prints a first-run setup token, starts the server at `http://127.0.0.1:8080`, and opens the page in the default browser. Docker is optional for UI development; the cluster panel reports Docker as unavailable when the Engine is not running.
+
+Use `./scripts/dev.sh --help` to select another address or data directory, require Docker, reuse an existing build, or disable automatic browser opening.
+
+Run all project checks:
+
 ```bash
 make install-web
 make verify

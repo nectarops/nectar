@@ -14,3 +14,4 @@ All notable user-facing changes are documented here. This project follows Semant
 - Versioned Swarm service deployment with Traefik and Let's Encrypt HTTP-01.
 - Ubuntu/Debian installer with explicit Docker version safety checks.
 - Reproducible container build, API contract, tests, and open-source project files.
+- One-command local launcher with an isolated data directory and automatic browser opening.

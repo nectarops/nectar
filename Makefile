@@ -2,13 +2,17 @@ SHELL := /bin/sh
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install-web format format-check lint typecheck test test-race build build-web build-go verify clean
+.PHONY: help dev install-web format format-check lint typecheck test test-race build build-web build-go verify clean
 
 help:
 	@printf '%s\n' 'Dock-Weaver development targets:'
+	@printf '%s\n' '  make dev          Build and start the local web application'
 	@printf '%s\n' '  make install-web  Install pinned frontend dependencies'
 	@printf '%s\n' '  make format       Format Go source'
 	@printf '%s\n' '  make verify       Run formatting, lint, tests, and builds'
+
+dev:
+	./scripts/dev.sh
 
 install-web:
 	pnpm --dir web install --frozen-lockfile
@@ -23,6 +27,7 @@ lint:
 	go vet ./...
 	npm --prefix web run lint
 	bash -n install.sh
+	sh -n scripts/dev.sh scripts/sync-web-assets.sh
 
 typecheck:
 	npm --prefix web run typecheck
