@@ -20,6 +20,7 @@ export type ClusterSnapshot = {
   architecture: string
   kernelVersion: string
   dockerVersion: string
+  desiredDockerVersion: string
   dockerApiVersion: string
   swarmState: string
   nodeId: string
@@ -153,6 +154,7 @@ export async function getCluster(signal?: AbortSignal): Promise<ClusterSnapshot>
     architecture: requireString(value.architecture, 'architecture'),
     kernelVersion: requireString(value.kernelVersion, 'kernelVersion'),
     dockerVersion: requireString(value.dockerVersion, 'dockerVersion'),
+    desiredDockerVersion: requireString(value.desiredDockerVersion, 'desiredDockerVersion'),
     dockerApiVersion: requireString(value.dockerApiVersion, 'dockerApiVersion'),
     swarmState: requireString(value.swarmState, 'swarmState'),
     nodeId: optionalString(value.nodeId) ?? '',

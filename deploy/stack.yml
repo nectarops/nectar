@@ -10,6 +10,7 @@ services:
       NECTAR_ADDR: ":8080"
       NECTAR_COOKIE_SECURE: "false"
       NECTAR_DATA_DIR: /var/lib/nectar
+      NECTAR_DESIRED_DOCKER_VERSION: ${NECTAR_DESIRED_DOCKER_VERSION:-}
       NECTAR_INIT_TOKEN_FILE: /run/secrets/nectar_init_token
       NECTAR_REQUIRE_DOCKER: "true"
     ports:

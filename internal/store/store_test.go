@@ -103,3 +103,44 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		t.Fatalf("second Close() error = %v", err)
 	}
 }
+
+func TestDesiredDockerVersionPolicyCannotBeSilentlyOverwritten(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	storage, err := Open(ctx, filepath.Join(t.TempDir(), "nectar.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := storage.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+
+	version, err := storage.DesiredDockerVersion(ctx)
+	if err != nil {
+		t.Fatalf("DesiredDockerVersion() before initialization error = %v", err)
+	}
+	if version != "" {
+		t.Fatalf("DesiredDockerVersion() before initialization = %q, want empty", version)
+	}
+
+	if err := storage.EnsureDesiredDockerVersion(ctx, "28.3.0"); err != nil {
+		t.Fatalf("EnsureDesiredDockerVersion() error = %v", err)
+	}
+	if err := storage.EnsureDesiredDockerVersion(ctx, "28.3.0"); err != nil {
+		t.Fatalf("idempotent EnsureDesiredDockerVersion() error = %v", err)
+	}
+	if err := storage.EnsureDesiredDockerVersion(ctx, "29.0.2"); !errors.Is(err, domain.ErrDockerVersionConflict) {
+		t.Fatalf("conflicting EnsureDesiredDockerVersion() error = %v, want ErrDockerVersionConflict", err)
+	}
+
+	version, err = storage.DesiredDockerVersion(ctx)
+	if err != nil {
+		t.Fatalf("DesiredDockerVersion() error = %v", err)
+	}
+	if version != "28.3.0" {
+		t.Fatalf("DesiredDockerVersion() = %q, want 28.3.0", version)
+	}
+}

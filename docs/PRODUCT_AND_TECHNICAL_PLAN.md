@@ -221,9 +221,13 @@ Responsibilities:
 
 Version policy:
 
-- Store a cluster-wide `desired_docker_version`.
-- Verify that the desired version is available for every new node's distribution.
-- Initially require the same distribution family. Cross-family nodes may use different package strings only when the Engine version matches.
+- Store a cluster-wide `desired_docker_version`. The current alpha initializes it from the first
+  Manager's verified Docker Engine server version and refuses an installer rerun that would silently
+  overwrite it.
+- When Docker is absent, verify that the desired version is available for the new node's distribution
+  and install that exact Engine version.
+- When Docker is already installed, preserve it and allow enrollment after health and compatibility
+  checks; display version drift instead of silently replacing Docker or blocking the node.
 - Upgrade nodes sequentially through drain → upgrade → verify → active while preserving Manager quorum.
 - Disable downgrades by default and require a separate dangerous-action confirmation and backup check.
 
