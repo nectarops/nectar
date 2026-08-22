@@ -250,6 +250,11 @@ function ClusterOverview({ cluster }: { cluster: ClusterSnapshot }) {
 
   const memory = formatBytes(cluster.memoryBytes)
   const swarmActive = cluster.swarmState === 'active'
+  const dockerVersionMismatch = Boolean(
+    cluster.desiredDockerVersion &&
+    cluster.dockerVersion &&
+    cluster.desiredDockerVersion !== cluster.dockerVersion,
+  )
 
   return (
     <div className="flex flex-col gap-6">
@@ -259,6 +264,19 @@ function ClusterOverview({ cluster }: { cluster: ClusterSnapshot }) {
         <MetricCard icon={MemoryStick} label="Memory capacity" value={memory} detail="Reported by this Docker host" />
         <MetricCard icon={Box} label="Workload" value={`${cluster.containersRunning} running`} detail={`${cluster.images} local image(s)`} />
       </div>
+
+      {dockerVersionMismatch ? (
+        <Alert>
+          <ShieldAlert aria-hidden="true" />
+          <AlertTitle>Docker version policy mismatch</AlertTitle>
+          <AlertDescription>
+            This Manager runs Docker {cluster.dockerVersion}, but the cluster target is{' '}
+            {cluster.desiredDockerVersion}. Nodes without Docker should install the target version;
+            nodes with Docker can join without replacing their existing Engine and remain visible
+            as version drift.
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
@@ -273,6 +291,7 @@ function ClusterOverview({ cluster }: { cluster: ClusterSnapshot }) {
             <Detail label="Operating system" value={cluster.operatingSystem} />
             <Detail label="Kernel" value={cluster.kernelVersion} />
             <Detail label="Docker Engine" value={cluster.dockerVersion} />
+            <Detail label="Cluster Docker target" value={cluster.desiredDockerVersion} />
             <Detail label="Docker API" value={cluster.dockerApiVersion} />
           </CardContent>
         </Card>

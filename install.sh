@@ -161,6 +161,7 @@ log "Manager address: ${advertise_addr}; Web port: ${web_port}"
 log "Nectar image: ${image}"
 
 installed_docker=""
+actual_docker=""
 log "Traefik image: ${traefik_image}"
 if command -v docker >/dev/null 2>&1; then
   installed_docker=$(docker version --format '{{.Server.Version}}' 2>/dev/null || true)
@@ -460,6 +461,9 @@ if [[ "${dry_run}" != true ]]; then
   actual_docker=$(docker version --format '{{.Server.Version}}')
   [[ -z "${docker_version}" || "${actual_docker}" == "${docker_version}" ]] ||
     die "Docker version verification failed: expected ${docker_version}, found ${actual_docker}"
+  log "Verified Docker Engine ${actual_docker}; Nectar will record it as the cluster-wide target version."
+else
+  log "Would record the verified Docker Engine version as the cluster-wide target after Docker starts."
 fi
 
 swarm_state="inactive"
@@ -496,6 +500,15 @@ wait_for_traefik
 service_exists=false
 if [[ "${dry_run}" != true ]] && docker service inspect "${STACK_NAME}_nectar" >/dev/null 2>&1; then
   service_exists=true
+fi
+if [[ "${service_exists}" == true ]]; then
+  recorded_service_version=$(
+    docker service inspect --format '{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{println .}}{{end}}' "${STACK_NAME}_nectar" |
+      awk -F= '$1 == "NECTAR_DESIRED_DOCKER_VERSION" {print substr($0, index($0, "=") + 1); exit}'
+  )
+  if [[ -n "${recorded_service_version}" && "${recorded_service_version}" != "${actual_docker}" ]]; then
+    die "Docker ${actual_docker} is running, but Nectar records ${recorded_service_version} as the cluster target; use a controlled cluster Docker upgrade instead of overwriting the policy"
+  fi
 fi
 if [[ "${service_exists}" != true ]] && command -v ss >/dev/null 2>&1 &&
   ss -H -ltn "sport = :${web_port}" 2>/dev/null | grep -q .; then
@@ -535,6 +548,7 @@ services:
       NECTAR_ADDR: ":8080"
       NECTAR_COOKIE_SECURE: "false"
       NECTAR_DATA_DIR: /var/lib/nectar
+      NECTAR_DESIRED_DOCKER_VERSION: "${actual_docker}"
       NECTAR_INIT_TOKEN_FILE: /run/secrets/${SECRET_NAME}
       NECTAR_REQUIRE_DOCKER: "true"
     ports:

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -22,19 +23,22 @@ const (
 	defaultShutdownTimeout = 15 * time.Second
 )
 
+var dockerVersionPattern = regexp.MustCompile(`^[0-9][0-9A-Za-z.+:~_-]{0,127}$`)
+
 type Config struct {
-	Address         string
-	DataDir         string
-	DatabasePath    string
-	InitToken       string
-	CookieSecure    bool
-	RequireDocker   bool
-	SessionDuration time.Duration
-	DockerTimeout   time.Duration
-	ShutdownTimeout time.Duration
-	SourceURL       string
-	Version         string
-	Commit          string
+	Address              string
+	DataDir              string
+	DatabasePath         string
+	InitToken            string
+	CookieSecure         bool
+	RequireDocker        bool
+	DesiredDockerVersion string
+	SessionDuration      time.Duration
+	DockerTimeout        time.Duration
+	ShutdownTimeout      time.Duration
+	SourceURL            string
+	Version              string
+	Commit               string
 }
 
 func Load() (Config, error) {
@@ -55,18 +59,19 @@ func Load() (Config, error) {
 	}
 
 	return Config{
-		Address:         valueOrDefault("NECTAR_ADDR", defaultAddress),
-		DataDir:         dataDir,
-		DatabasePath:    filepath.Join(dataDir, "nectar.db"),
-		InitToken:       initToken,
-		CookieSecure:    cookieSecure,
-		RequireDocker:   requireDocker,
-		SessionDuration: defaultSessionDuration,
-		DockerTimeout:   defaultDockerTimeout,
-		ShutdownTimeout: defaultShutdownTimeout,
-		SourceURL:       valueOrDefault("NECTAR_SOURCE_URL", "https://github.com/nectarops/nectar"),
-		Version:         valueOrDefault("NECTAR_VERSION", version.Version),
-		Commit:          valueOrDefault("NECTAR_COMMIT", version.Commit),
+		Address:              valueOrDefault("NECTAR_ADDR", defaultAddress),
+		DataDir:              dataDir,
+		DatabasePath:         filepath.Join(dataDir, "nectar.db"),
+		InitToken:            initToken,
+		CookieSecure:         cookieSecure,
+		RequireDocker:        requireDocker,
+		DesiredDockerVersion: strings.TrimSpace(os.Getenv("NECTAR_DESIRED_DOCKER_VERSION")),
+		SessionDuration:      defaultSessionDuration,
+		DockerTimeout:        defaultDockerTimeout,
+		ShutdownTimeout:      defaultShutdownTimeout,
+		SourceURL:            valueOrDefault("NECTAR_SOURCE_URL", "https://github.com/nectarops/nectar"),
+		Version:              valueOrDefault("NECTAR_VERSION", version.Version),
+		Commit:               valueOrDefault("NECTAR_COMMIT", version.Commit),
 	}, nil
 }
 
@@ -117,6 +122,9 @@ func (c Config) Validate() error {
 	}
 	if strings.TrimSpace(c.DataDir) == "" {
 		return errors.New("data directory is required")
+	}
+	if c.DesiredDockerVersion != "" && !dockerVersionPattern.MatchString(c.DesiredDockerVersion) {
+		return errors.New("desired Docker version contains unsupported characters")
 	}
 	if c.SessionDuration <= 0 {
 		return errors.New("session duration must be positive")

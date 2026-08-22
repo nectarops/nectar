@@ -155,9 +155,11 @@ components:
     Cluster:
       type: object
       additionalProperties: true
-      required: [available, swarmState, nodeRole, nodes, managers]
+      required: [available, dockerVersion, desiredDockerVersion, swarmState, nodeRole, nodes, managers]
       properties:
         available: { type: boolean }
+        dockerVersion: { type: string, description: Docker Engine version reported by the local Manager. }
+        desiredDockerVersion: { type: string, description: Cluster-wide Docker Engine target stored in SQLite. }
         swarmState: { type: string }
         nodeRole: { type: string }
         nodes: { type: integer }

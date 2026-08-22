@@ -38,6 +38,12 @@ func Run(
 		}
 	}()
 
+	if cfg.DesiredDockerVersion != "" {
+		if err := database.EnsureDesiredDockerVersion(ctx, cfg.DesiredDockerVersion); err != nil {
+			return fmt.Errorf("persist Manager Docker version: %w", err)
+		}
+	}
+
 	configured, err := database.SetupCompleted(ctx)
 	if err != nil {
 		return err
@@ -82,7 +88,7 @@ func Run(
 		return err
 	}
 
-	clusterService, err := application.NewClusterService(clusterReader)
+	clusterService, err := application.NewClusterService(clusterReader, database)
 	if err != nil {
 		return err
 	}

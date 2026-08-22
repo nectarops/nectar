@@ -80,6 +80,25 @@ test('explains why deployment is unavailable when Swarm is inactive', async () =
   expect(screen.queryByRole('heading', { name: 'Deploy a service' })).not.toBeInTheDocument()
 })
 
+test('warns when the Manager Docker version differs from the cluster target', async () => {
+  stubCluster({
+    ...clusterSnapshot,
+    dockerVersion: '29.0.2',
+  })
+
+  render(
+    <DashboardPage
+      user={user}
+      version={version}
+      onLoggedOut={vi.fn()}
+    />,
+  )
+
+  expect(await screen.findByText('Docker version policy mismatch')).toBeInTheDocument()
+  expect(screen.getByText(/Manager runs Docker 29\.0\.2/)).toBeInTheDocument()
+  expect(screen.getByText('28.3.0')).toBeInTheDocument()
+})
+
 function stubCluster(cluster: ClusterSnapshot) {
   vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(cluster)))
 }
@@ -98,6 +117,7 @@ const clusterSnapshot: ClusterSnapshot = {
   architecture: 'aarch64',
   kernelVersion: '6.10.14-linuxkit',
   dockerVersion: '28.3.0',
+  desiredDockerVersion: '28.3.0',
   dockerApiVersion: '1.51',
   swarmState: 'inactive',
   nodeId: '',

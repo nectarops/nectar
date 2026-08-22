@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/nectarops/nectar/internal/domain"
@@ -134,6 +135,65 @@ func (s *Store) applyMigration(ctx context.Context, name string) error {
 	}
 
 	return nil
+}
+
+func (s *Store) EnsureDesiredDockerVersion(ctx context.Context, version string) error {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return errors.New("desired Docker version is required")
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin Docker version policy transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO settings(key, value, updated_at) VALUES ('desired_docker_version', ?, ?)
+		 ON CONFLICT(key) DO NOTHING`,
+		version,
+		time.Now().UTC().Unix(),
+	); err != nil {
+		return fmt.Errorf("initialize desired Docker version: %w", err)
+	}
+
+	var recorded string
+	if err := tx.QueryRowContext(
+		ctx,
+		"SELECT value FROM settings WHERE key = 'desired_docker_version'",
+	).Scan(&recorded); err != nil {
+		return fmt.Errorf("read desired Docker version: %w", err)
+	}
+	if recorded != version {
+		return fmt.Errorf(
+			"%w: recorded %q, Manager reports %q",
+			domain.ErrDockerVersionConflict,
+			recorded,
+			version,
+		)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit Docker version policy: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) DesiredDockerVersion(ctx context.Context) (string, error) {
+	var version string
+	err := s.db.QueryRowContext(
+		ctx,
+		"SELECT value FROM settings WHERE key = 'desired_docker_version'",
+	).Scan(&version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read desired Docker version: %w", err)
+	}
+	return version, nil
 }
 
 func (s *Store) SetupCompleted(ctx context.Context) (bool, error) {

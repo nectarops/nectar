@@ -12,6 +12,7 @@ There is no hosted account, node-count license, telemetry requirement, or paid f
 
 - A single idempotent Ubuntu/Debian host installer with explicit Docker Engine version selection.
 - Safe handling of an existing Docker installation: version changes require `--force-docker-version`.
+- Persistence of the verified Manager Docker Engine version as a protected cluster target in SQLite.
 - Safe merging and validation of bounded Docker `json-file` log rotation in `/etc/docker/daemon.json`.
 - Swarm initialization without forcing a host out of an existing cluster.
 - Baseline Traefik `v3.7.1` installation on ports 80 and 443 before the first Web visit.
@@ -67,7 +68,7 @@ Run `bash install.sh --help` for all options. The installer preserves unrelated 
 }
 ```
 
-It then initializes Swarm when needed, creates `traefik-public`, installs a pinned baseline Traefik service, deploys Nectar, and prints the exact Web URL and one-time setup token after readiness succeeds. Delete the root-readable resume copy at `/var/lib/nectar/bootstrap-token` after setup. Docker logging defaults apply to containers created after the daemon restart; existing containers keep their original logging configuration.
+It then initializes Swarm when needed, creates `traefik-public`, installs a pinned baseline Traefik service, deploys Nectar, and prints the exact Web URL and one-time setup token after readiness succeeds. The verified Docker Engine server version is stored in SQLite as `desired_docker_version`; rerunning the installer cannot silently replace that cluster policy. Delete the root-readable resume copy at `/var/lib/nectar/bootstrap-token` after setup. Docker logging defaults apply to containers created after the daemon restart; existing containers keep their original logging configuration.
 
 On the first visit, open the printed `http://<manager-ip>:<port>` URL and create the Owner account. You can also enter a management domain and Let's Encrypt email. Before submitting those optional fields, point the domain to the host and allow inbound TCP 80 and 443. Nectar enables Traefik ACME and attaches an HTTPS route to its own Swarm service. The IP-and-port URL remains available as a recovery path; sign in again when opening the domain because browser cookies are scoped to each host.
 
@@ -77,6 +78,21 @@ To test an unpublished image, build and push it under a pinned tag, then set `NE
 sudo NECTAR_IMAGE=registry.example.com/ops/nectar:0.1.0 \
   bash install.sh --advertise-addr 192.0.2.10
 ```
+
+## Docker version policy and additional nodes
+
+The first Manager's verified Docker Engine server version becomes the cluster-wide target. The overview page shows both the Manager's live version and the SQLite target and warns if they differ.
+
+Remote SSH node enrollment is not implemented in the current alpha. Its required version flow is:
+
+1. Read `desired_docker_version` from the Manager's SQLite-backed cluster policy.
+2. Inspect the candidate node's distribution, architecture, and existing Docker Engine.
+3. If Docker is absent, verify that the official Docker repository provides the exact target Engine version, install its matching distribution package, and confirm the daemon reports the target version.
+4. If Docker is already installed, verify that its daemon is healthy, preserve the existing version, and continue even when it differs from the target.
+5. Record and display version drift instead of silently upgrading, downgrading, or blocking the existing installation.
+6. Retrieve a short-lived Swarm join token, join the node, verify it is Ready, and clear the token without storing or logging it.
+
+Until the node-enrollment workflow lands, do not copy the Manager installer onto a Worker: `install.sh` initializes or preserves a Manager and deploys the Nectar control plane. When adding a Worker manually, install **Cluster Docker target** only if Docker is absent; preserve an existing healthy Docker installation.
 
 ## Deploying an application
 
