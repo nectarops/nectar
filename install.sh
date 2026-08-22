@@ -4,39 +4,46 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-readonly PROGRAM="dock-weaver-installer"
+readonly PROGRAM="nectar-installer"
 readonly DOCKER_KEY_FINGERPRINT="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
-readonly DEFAULT_DOCK_WEAVER_VERSION="0.1.0"
+readonly DEFAULT_NECTAR_VERSION="0.1.0"
 readonly DEFAULT_WEB_PORT="8080"
-readonly INSTALL_DIR="/opt/dock-weaver"
-readonly DATA_DIR="/var/lib/dock-weaver"
-readonly STACK_NAME="dock-weaver"
-readonly SECRET_NAME="dock_weaver_init_token"
+readonly INSTALL_DIR="/opt/nectar"
+readonly DATA_DIR="/var/lib/nectar"
+readonly STACK_NAME="nectar"
+readonly SECRET_NAME="nectar_init_token"
+readonly DAEMON_CONFIG="/etc/docker/daemon.json"
+readonly TRAEFIK_SERVICE_NAME="nectar-traefik"
+readonly TRAEFIK_NETWORK_NAME="traefik-public"
+readonly TRAEFIK_VOLUME_NAME="nectar-traefik-acme"
+readonly DEFAULT_TRAEFIK_IMAGE="traefik:v3.7.1"
 
 docker_version=""
 advertise_addr=""
 web_port="${DEFAULT_WEB_PORT}"
-dock_weaver_version="${DEFAULT_DOCK_WEAVER_VERSION}"
+nectar_version="${DEFAULT_NECTAR_VERSION}"
 force_docker_version=false
 dry_run=false
 
+docker_config_changed=false
 usage() {
   cat <<'EOF'
-Install Dock-Weaver on an Ubuntu or Debian Docker Swarm Manager.
+Install Nectar on an Ubuntu or Debian Docker Swarm Manager.
 
 Usage: sudo bash install.sh [options]
 
 Options:
   --docker-version VERSION       Install or require this Docker Engine version.
-  --advertise-addr ADDRESS      Manager advertise address or interface.
+  --advertise-addr ADDRESS       Manager advertise address or interface.
   --web-port PORT               Published Web port (default: 8080).
-  --dock-weaver-version VERSION Deploy this pinned Dock-Weaver image tag.
+  --nectar-version VERSION       Deploy this pinned Nectar image tag.
   --force-docker-version        Explicitly allow changing an existing Docker version.
   --dry-run                     Validate and print planned actions without changing the host.
   --help                        Show this help.
 
 Environment:
-  DOCK_WEAVER_IMAGE             Override the complete pinned container image reference.
+  NECTAR_IMAGE                  Override the complete pinned container image reference.
+  NECTAR_TRAEFIK_IMAGE          Override the pinned Traefik image reference.
 EOF
 }
 
@@ -84,9 +91,9 @@ while (($# > 0)); do
       web_port=$2
       shift 2
       ;;
-    --dock-weaver-version)
-      (($# >= 2)) || die "--dock-weaver-version requires a value"
-      dock_weaver_version=$2
+    --nectar-version)
+      (($# >= 2)) || die "--nectar-version requires a value"
+      nectar_version=$2
       shift 2
       ;;
     --force-docker-version)
@@ -110,8 +117,8 @@ done
 [[ "${EUID}" -eq 0 ]] || die "run this installer as root (for example, with sudo)"
 [[ "${web_port}" =~ ^[0-9]+$ ]] || die "web port must be numeric"
 ((web_port >= 1 && web_port <= 65535)) || die "web port must be between 1 and 65535"
-[[ "${dock_weaver_version}" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] ||
-  die "Dock-Weaver version must be a pinned semantic version, not latest"
+[[ "${nectar_version}" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] ||
+  die "Nectar version must be a pinned semantic version, not latest"
 if [[ -n "${docker_version}" ]]; then
   [[ "${docker_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] ||
     die "Docker version must look like 29.0.1"
@@ -142,15 +149,19 @@ if [[ -z "${advertise_addr}" ]]; then
   [[ -n "${advertise_addr}" ]] || die "unable to determine a Manager address; pass --advertise-addr"
 fi
 
-image=${DOCK_WEAVER_IMAGE:-"ghcr.io/ranen/dock-weaver:${dock_weaver_version#v}"}
-[[ "${image}" != *":latest" ]] || die "the Dock-Weaver image must not use the latest tag"
+image=${NECTAR_IMAGE:-"ghcr.io/nectarops/nectar:${nectar_version#v}"}
+[[ "${image}" != *":latest" ]] || die "the Nectar image must not use the latest tag"
 [[ "${image}" =~ ^[A-Za-z0-9._:/@-]+$ ]] || die "container image reference contains unsupported characters"
 
+traefik_image=${NECTAR_TRAEFIK_IMAGE:-"${DEFAULT_TRAEFIK_IMAGE}"}
+[[ "${traefik_image}" != *":latest" ]] || die "the Traefik image must not use the latest tag"
+[[ "${traefik_image}" =~ ^[A-Za-z0-9._:/@-]+$ ]] || die "Traefik image reference contains unsupported characters"
 log "Host: ${distribution} ${VERSION_ID:-unknown} (${architecture})"
 log "Manager address: ${advertise_addr}; Web port: ${web_port}"
-log "Dock-Weaver image: ${image}"
+log "Nectar image: ${image}"
 
 installed_docker=""
+log "Traefik image: ${traefik_image}"
 if command -v docker >/dev/null 2>&1; then
   installed_docker=$(docker version --format '{{.Server.Version}}' 2>/dev/null || true)
   if [[ -z "${installed_docker}" ]]; then
@@ -225,11 +236,225 @@ install_docker() {
   fi
 }
 
+ensure_json_tool() {
+  if command -v jq >/dev/null 2>&1; then
+    return
+  fi
+  run apt-get update
+  run apt-get install -y jq
+  if [[ "${dry_run}" != true ]]; then
+    command -v jq >/dev/null 2>&1 || die "jq is required to merge ${DAEMON_CONFIG} safely"
+  fi
+}
+
+protect_manager_quorum() {
+  [[ "${dry_run}" != true && -n "${installed_docker}" ]] || return
+  [[ "$(docker info --format '{{.Swarm.LocalNodeState}}')" == "active" ]] || return
+  [[ "$(docker info --format '{{.Swarm.ControlAvailable}}')" == "true" ]] || return
+
+  local managers
+  local quorum
+  local reachable
+  managers=$(docker node ls --filter role=manager --format '{{.ID}}' | wc -l | tr -d ' ')
+  reachable=$(docker node ls --filter role=manager --format '{{.ManagerStatus}}' |
+    awk '$0 == "Leader" || $0 == "Reachable" {count++} END {print count+0}')
+  if ((managers == 1)); then
+    log "Docker restart will briefly interrupt this single-Manager control plane."
+    return
+  fi
+  quorum=$((managers / 2 + 1))
+  ((reachable - 1 >= quorum)) ||
+    die "refusing to restart Docker: the remaining reachable Managers would not preserve quorum"
+}
+
+configure_docker_logging() {
+  if [[ "${dry_run}" == true ]]; then
+    log "Would safely merge json-file rotation settings into ${DAEMON_CONFIG}, validate it, and restart Docker only if changed."
+    docker_config_changed=true
+    return
+  fi
+
+  ensure_json_tool
+  install -d -m 0755 "$(dirname "${DAEMON_CONFIG}")"
+  local candidate
+  candidate=$(mktemp "${DAEMON_CONFIG}.tmp.XXXXXX")
+
+  if [[ -e "${DAEMON_CONFIG}" ]]; then
+    jq -e '
+      type == "object" and
+      (.["log-opts"] == null or (.["log-opts"] | type == "object"))
+    ' "${DAEMON_CONFIG}" >/dev/null ||
+      die "${DAEMON_CONFIG} and its log-opts value must contain JSON objects"
+    if ! jq '.
+      | .["log-driver"] = "json-file"
+      | .["log-opts"] = ((.["log-opts"] // {}) + {
+          "max-size": "100m",
+          "max-file": "3",
+          "compress": "true"
+        })' "${DAEMON_CONFIG}" >"${candidate}"; then
+      rm -f "${candidate}"
+      die "unable to merge Docker logging settings"
+    fi
+  else
+    printf '{}\n' |
+      jq '.
+        | .["log-driver"] = "json-file"
+        | .["log-opts"] = {
+            "max-size": "100m",
+            "max-file": "3",
+            "compress": "true"
+          }' >"${candidate}"
+  fi
+
+  if ! dockerd --validate --config-file "${candidate}" >/dev/null; then
+    rm -f "${candidate}"
+    die "the merged Docker daemon configuration is invalid"
+  fi
+  if [[ -e "${DAEMON_CONFIG}" ]] && cmp -s "${candidate}" "${DAEMON_CONFIG}"; then
+    rm -f "${candidate}"
+    log "Docker logging configuration is already current."
+    return
+  fi
+
+  protect_manager_quorum
+  install -m 0644 "${candidate}" "${DAEMON_CONFIG}"
+  rm -f "${candidate}"
+  docker_config_changed=true
+  log "Updated ${DAEMON_CONFIG} with bounded json-file log rotation."
+}
+
+ensure_traefik() {
+  if [[ "${dry_run}" == true ]]; then
+    run docker network create --driver overlay --attachable \
+      --label io.nectar.managed=true "${TRAEFIK_NETWORK_NAME}"
+    run docker volume create --label io.nectar.managed=true "${TRAEFIK_VOLUME_NAME}"
+    run docker service create \
+      --name "${TRAEFIK_SERVICE_NAME}" \
+      --label io.nectar.managed=true \
+      --label io.nectar.acme-email= \
+      --constraint node.role==manager \
+      --network "${TRAEFIK_NETWORK_NAME}" \
+      --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock,readonly \
+      --mount type=volume,source="${TRAEFIK_VOLUME_NAME}",target=/letsencrypt \
+      --publish published=80,target=80,protocol=tcp,mode=ingress \
+      --publish published=443,target=443,protocol=tcp,mode=ingress \
+      --read-only \
+      --replicas 1 \
+      --restart-condition on-failure \
+      --restart-delay 5s \
+      "${traefik_image}" \
+      --api.dashboard=false \
+      --log.level=INFO \
+      --providers.swarm.endpoint=unix:///var/run/docker.sock \
+      --providers.swarm.exposedbydefault=false \
+      --providers.swarm.network="${TRAEFIK_NETWORK_NAME}" \
+      --entrypoints.web.address=:80 \
+      --entrypoints.web.http.redirections.entrypoint.to=websecure \
+      --entrypoints.web.http.redirections.entrypoint.scheme=https \
+      --entrypoints.websecure.address=:443
+    return
+  fi
+
+  if docker network inspect "${TRAEFIK_NETWORK_NAME}" >/dev/null 2>&1; then
+    local network_driver
+    local network_scope
+    network_driver=$(docker network inspect --format '{{.Driver}}' "${TRAEFIK_NETWORK_NAME}")
+    network_scope=$(docker network inspect --format '{{.Scope}}' "${TRAEFIK_NETWORK_NAME}")
+    [[ "${network_driver}" == "overlay" && "${network_scope}" == "swarm" ]] ||
+      die "${TRAEFIK_NETWORK_NAME} exists but is not a Swarm overlay network"
+  else
+    docker network create --driver overlay --attachable \
+      --label io.nectar.managed=true "${TRAEFIK_NETWORK_NAME}" >/dev/null
+  fi
+
+  if docker volume inspect "${TRAEFIK_VOLUME_NAME}" >/dev/null 2>&1; then
+    local volume_managed
+    volume_managed=$(docker volume inspect --format '{{index .Labels "io.nectar.managed"}}' "${TRAEFIK_VOLUME_NAME}")
+    [[ "${volume_managed}" == "true" ]] ||
+      die "${TRAEFIK_VOLUME_NAME} exists but is not managed by Nectar"
+  else
+    docker volume create --label io.nectar.managed=true "${TRAEFIK_VOLUME_NAME}" >/dev/null
+  fi
+
+  if docker service inspect "${TRAEFIK_SERVICE_NAME}" >/dev/null 2>&1; then
+    local service_managed
+    service_managed=$(docker service inspect --format '{{index .Spec.Labels "io.nectar.managed"}}' "${TRAEFIK_SERVICE_NAME}")
+    [[ "${service_managed}" == "true" ]] ||
+      die "${TRAEFIK_SERVICE_NAME} exists but is not managed by Nectar"
+    log "Traefik is already installed; preserving the managed service."
+    return
+  fi
+
+  local port
+  if command -v ss >/dev/null 2>&1; then
+    for port in 80 443; do
+      if ss -H -ltn "sport = :${port}" 2>/dev/null | grep -q .; then
+        die "TCP port ${port} is already listening; Traefik requires ports 80 and 443"
+      fi
+    done
+  fi
+
+  docker service create \
+    --name "${TRAEFIK_SERVICE_NAME}" \
+    --label io.nectar.managed=true \
+    --label io.nectar.acme-email= \
+    --constraint node.role==manager \
+    --network "${TRAEFIK_NETWORK_NAME}" \
+    --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock,readonly \
+    --mount type=volume,source="${TRAEFIK_VOLUME_NAME}",target=/letsencrypt \
+    --publish published=80,target=80,protocol=tcp,mode=ingress \
+    --publish published=443,target=443,protocol=tcp,mode=ingress \
+    --read-only \
+    --replicas 1 \
+    --restart-condition on-failure \
+    --restart-delay 5s \
+    "${traefik_image}" \
+    --api.dashboard=false \
+    --log.level=INFO \
+    --providers.swarm.endpoint=unix:///var/run/docker.sock \
+    --providers.swarm.exposedbydefault=false \
+    --providers.swarm.network="${TRAEFIK_NETWORK_NAME}" \
+    --entrypoints.web.address=:80 \
+    --entrypoints.web.http.redirections.entrypoint.to=websecure \
+    --entrypoints.web.http.redirections.entrypoint.scheme=https \
+    --entrypoints.websecure.address=:443 >/dev/null
+  log "Installed the baseline Traefik Swarm service on ports 80 and 443."
+}
+
+wait_for_traefik() {
+  [[ "${dry_run}" != true ]] || return
+
+  local current
+  local desired
+  local replicas
+  log "Waiting for Traefik to reach its desired replica count …"
+  for _ in $(seq 1 60); do
+    replicas=$(docker service ls --filter "name=${TRAEFIK_SERVICE_NAME}" \
+      --format '{{.Name}} {{.Replicas}}' |
+      awk -v name="${TRAEFIK_SERVICE_NAME}" '$1 == name {print $2; exit}')
+    replicas=${replicas:-0/0}
+    current=${replicas%/*}
+    desired=${replicas#*/}
+    if [[ "${current}" =~ ^[0-9]+$ && "${desired}" =~ ^[0-9]+$ ]] &&
+      ((desired > 0 && current == desired)); then
+      return
+    fi
+    sleep 2
+  done
+  die "Traefik did not become ready; inspect: docker service ps ${TRAEFIK_SERVICE_NAME}"
+}
+
 if [[ -z "${installed_docker}" || ( -n "${docker_version}" && "${installed_docker}" != "${docker_version}" ) ]]; then
   install_docker
 fi
 
-run systemctl enable --now docker
+configure_docker_logging
+run systemctl enable docker
+if [[ "${docker_config_changed}" == true ]]; then
+  run systemctl restart docker
+else
+  run systemctl start docker
+fi
 if [[ "${dry_run}" != true ]]; then
   docker info >/dev/null
   actual_docker=$(docker version --format '{{.Server.Version}}')
@@ -260,13 +485,16 @@ esac
 
 if [[ "${dry_run}" != true ]]; then
   manager_node_id=$(docker info --format '{{.Swarm.NodeID}}')
-  docker node update --label-add dock-weaver.control=true "${manager_node_id}" >/dev/null
+  docker node update --label-add nectar.control=true "${manager_node_id}" >/dev/null
 else
-  log "Would label the current Manager node dock-weaver.control=true."
+  log "Would label the current Manager node nectar.control=true."
 fi
 
+ensure_traefik
+wait_for_traefik
+
 service_exists=false
-if [[ "${dry_run}" != true ]] && docker service inspect "${STACK_NAME}_dock-weaver" >/dev/null 2>&1; then
+if [[ "${dry_run}" != true ]] && docker service inspect "${STACK_NAME}_nectar" >/dev/null 2>&1; then
   service_exists=true
 fi
 if [[ "${service_exists}" != true ]] && command -v ss >/dev/null 2>&1 &&
@@ -300,31 +528,35 @@ else
   cat > "${stack_file}" <<EOF
 version: "3.9"
 services:
-  dock-weaver:
+  nectar:
     image: "${image}"
     user: root
     environment:
-      DW_ADDR: ":8080"
-      DW_COOKIE_SECURE: "false"
-      DW_DATA_DIR: /var/lib/dock-weaver
-      DW_INIT_TOKEN_FILE: /run/secrets/${SECRET_NAME}
-      DW_REQUIRE_DOCKER: "true"
+      NECTAR_ADDR: ":8080"
+      NECTAR_COOKIE_SECURE: "false"
+      NECTAR_DATA_DIR: /var/lib/nectar
+      NECTAR_INIT_TOKEN_FILE: /run/secrets/${SECRET_NAME}
+      NECTAR_REQUIRE_DOCKER: "true"
     ports:
       - target: 8080
         published: ${web_port}
         protocol: tcp
         mode: ingress
     volumes:
-      - dock_weaver_data:/var/lib/dock-weaver
+      - nectar_data:/var/lib/nectar
       - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - ${TRAEFIK_NETWORK_NAME}
     secrets:
       - ${SECRET_NAME}
     deploy:
+      labels:
+        io.nectar.managed: "true"
       replicas: 1
       placement:
         constraints:
           - node.role == manager
-          - node.labels.dock-weaver.control == true
+          - node.labels.nectar.control == true
       restart_policy:
         condition: on-failure
         delay: 5s
@@ -333,8 +565,11 @@ services:
         parallelism: 1
         order: stop-first
         failure_action: rollback
+networks:
+  ${TRAEFIK_NETWORK_NAME}:
+    external: true
 volumes:
-  dock_weaver_data:
+  nectar_data:
 secrets:
   ${SECRET_NAME}:
     external: true
@@ -346,7 +581,7 @@ run docker stack deploy --detach=true "${STACK_NAME}" --compose-file "${stack_fi
 
 setup_url="http://${advertise_addr}:${web_port}/"
 if [[ "${dry_run}" != true ]]; then
-  log "Waiting for Dock-Weaver readiness at ${setup_url}health/ready …"
+  log "Waiting for Nectar readiness at ${setup_url}health/ready …"
   ready=false
   for _ in $(seq 1 60); do
     if curl -fsS --max-time 3 "${setup_url}health/ready" >/dev/null 2>&1; then
@@ -355,9 +590,9 @@ if [[ "${dry_run}" != true ]]; then
     fi
     sleep 2
   done
-  [[ "${ready}" == true ]] || die "Dock-Weaver did not become ready; inspect: docker service ps ${STACK_NAME}_dock-weaver"
+  [[ "${ready}" == true ]] || die "Nectar did not become ready; inspect: docker service ps ${STACK_NAME}_nectar"
 
-  printf '\nDock-Weaver is ready.\n'
+  printf '\nNectar is ready.\n'
   printf 'Setup URL: %s\n' "${setup_url}"
   printf 'One-time setup token: %s\n' "$(<"${token_file}")"
   printf 'The token file is root-readable at %s for safe installer resume. Delete it after setup.\n' "${token_file}"

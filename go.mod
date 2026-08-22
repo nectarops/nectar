@@ -1,4 +1,4 @@
-module github.com/ranen/dock-weaver
+module github.com/nectarops/nectar
 
 go 1.26.5
 

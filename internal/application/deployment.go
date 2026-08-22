@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/ranen/dock-weaver/internal/domain"
+	"github.com/nectarops/nectar/internal/domain"
 )
 
 var (

@@ -14,7 +14,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/ranen/dock-weaver/internal/domain"
+	"github.com/nectarops/nectar/internal/domain"
 	_ "modernc.org/sqlite"
 )
 
@@ -156,6 +156,7 @@ func (s *Store) CompleteSetup(
 	ctx context.Context,
 	username string,
 	passwordHash string,
+	access domain.ManagementAccess,
 ) (domain.User, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -198,6 +199,25 @@ func (s *Store) CompleteSetup(
 		now.Unix(),
 	); err != nil {
 		return domain.User{}, fmt.Errorf("mark setup complete: %w", err)
+	}
+
+	if access.Domain != "" {
+		settings := map[string]string{
+			"management_domain": access.Domain,
+			"acme_email":        access.ACMEEmail,
+		}
+		for key, value := range settings {
+			if _, err := tx.ExecContext(
+				ctx,
+				`INSERT INTO settings(key, value, updated_at) VALUES (?, ?, ?)
+				 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+				key,
+				value,
+				now.Unix(),
+			); err != nil {
+				return domain.User{}, fmt.Errorf("store %s setting: %w", key, err)
+			}
+		}
 	}
 
 	if err := tx.Commit(); err != nil {

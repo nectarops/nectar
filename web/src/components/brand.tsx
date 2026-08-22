@@ -9,7 +9,7 @@ export function Brand() {
         <Boxes aria-hidden="true" />
       </span>
       <div className="flex flex-col gap-0.5">
-        <span className="text-lg font-semibold tracking-tight">Dock-Weaver</span>
+        <span className="text-lg font-semibold tracking-tight">Nectar</span>
         <span className="text-xs text-muted-foreground">Docker Swarm, without the ceremony</span>
       </div>
     </div>

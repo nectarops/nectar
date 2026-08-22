@@ -11,7 +11,7 @@ import (
 func TestDecodeJSONAcceptsCharset(t *testing.T) {
 	t.Parallel()
 
-	request := httptest.NewRequest("POST", "/", strings.NewReader(`{"name":"dock-weaver"}`))
+	request := httptest.NewRequest("POST", "/", strings.NewReader(`{"name":"nectar"}`))
 	request.Header.Set("Content-Type", "application/json; charset=utf-8")
 	recorder := httptest.NewRecorder()
 	var body struct {
@@ -21,7 +21,7 @@ func TestDecodeJSONAcceptsCharset(t *testing.T) {
 	if err := decodeJSON(recorder, request, &body); err != nil {
 		t.Fatalf("decodeJSON() error = %v", err)
 	}
-	if body.Name != "dock-weaver" {
+	if body.Name != "nectar" {
 		t.Fatalf("decoded name = %q", body.Name)
 	}
 }
@@ -38,5 +38,15 @@ func TestDecodeJSONRejectsUnknownFields(t *testing.T) {
 
 	if err := decodeJSON(recorder, request, &body); err == nil {
 		t.Fatal("decodeJSON() accepted an unknown field")
+	}
+}
+
+func TestRequestUsesHTTPSForwardedProto(t *testing.T) {
+	t.Parallel()
+
+	request := httptest.NewRequest("GET", "http://nectar.example.com/", nil)
+	request.Header.Set("X-Forwarded-Proto", "https")
+	if !requestUsesHTTPS(request) {
+		t.Fatal("requestUsesHTTPS() = false behind an HTTPS proxy")
 	}
 }

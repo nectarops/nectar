@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ranen/dock-weaver/internal/domain"
-	"github.com/ranen/dock-weaver/internal/security"
+	"github.com/nectarops/nectar/internal/domain"
+	"github.com/nectarops/nectar/internal/security"
 )
 
 type statusRecorder struct {

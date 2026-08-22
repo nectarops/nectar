@@ -15,13 +15,14 @@ import (
 	"github.com/moby/moby/api/types/swarm"
 	"github.com/moby/moby/client"
 
-	"github.com/ranen/dock-weaver/internal/domain"
+	"github.com/nectarops/nectar/internal/domain"
 )
 
 const (
 	ingressNetworkName = "traefik-public"
-	traefikServiceName = "dock-weaver-traefik"
-	traefikVolumeName  = "dock-weaver-traefik-acme"
+	nectarServiceName  = "nectar_nectar"
+	traefikServiceName = "nectar-traefik"
+	traefikVolumeName  = "nectar-traefik-acme"
 	traefikImage       = "traefik:v3.7.1"
 )
 
@@ -64,8 +65,8 @@ func (i *Inspector) Deploy(
 			Warnings:  created.Warnings,
 		}, nil
 	}
-	if inspected.Service.Spec.Labels["io.dock-weaver.managed"] != "true" {
-		return domain.DeploymentResult{}, errors.New("a service with this name exists but is not managed by Dock-Weaver")
+	if inspected.Service.Spec.Labels["io.nectar.managed"] != "true" {
+		return domain.DeploymentResult{}, errors.New("a service with this name exists but is not managed by Nectar")
 	}
 
 	updated, err := i.client.ServiceUpdate(requestCtx, inspected.Service.ID, client.ServiceUpdateOptions{
@@ -82,6 +83,74 @@ func (i *Inspector) Deploy(
 		Updated:   true,
 		Warnings:  updated.Warnings,
 	}, nil
+}
+
+func (i *Inspector) ConfigureManagementAccess(
+	ctx context.Context,
+	access domain.ManagementAccess,
+) error {
+	requestCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+
+	networkID, err := i.ensureIngressNetwork(requestCtx)
+	if err != nil {
+		return err
+	}
+	if err := i.ensureTraefik(requestCtx, networkID, access.ACMEEmail); err != nil {
+		return err
+	}
+
+	inspected, err := i.client.ServiceInspect(
+		requestCtx,
+		nectarServiceName,
+		client.ServiceInspectOptions{},
+	)
+	if cerrdefs.IsNotFound(err) {
+		return errors.New("installed Nectar Swarm service was not found")
+	}
+	if err != nil {
+		return fmt.Errorf("inspect Nectar service: %w", err)
+	}
+	if inspected.Service.Spec.Labels["io.nectar.managed"] != "true" {
+		return errors.New("installed Nectar service is not managed by Nectar")
+	}
+
+	spec := inspected.Service.Spec
+	labels := make(map[string]string, len(spec.Labels)+8)
+	for key, value := range spec.Labels {
+		labels[key] = value
+	}
+	labels["io.nectar.management-domain"] = access.Domain
+	labels["traefik.enable"] = "true"
+	labels["traefik.swarm.network"] = ingressNetworkName
+	labels["traefik.http.routers.nectar.rule"] = "Host(`" + access.Domain + "`)"
+	labels["traefik.http.routers.nectar.entrypoints"] = "websecure"
+	labels["traefik.http.routers.nectar.tls"] = "true"
+	labels["traefik.http.routers.nectar.tls.certresolver"] = "letsencrypt"
+	labels["traefik.http.services.nectar.loadbalancer.server.port"] = "8080"
+	spec.Labels = labels
+
+	attached := false
+	for _, attachment := range spec.TaskTemplate.Networks {
+		if attachment.Target == networkID || attachment.Target == ingressNetworkName {
+			attached = true
+			break
+		}
+	}
+	if !attached {
+		spec.TaskTemplate.Networks = append(
+			spec.TaskTemplate.Networks,
+			swarm.NetworkAttachmentConfig{Target: networkID},
+		)
+	}
+
+	if _, err := i.client.ServiceUpdate(requestCtx, inspected.Service.ID, client.ServiceUpdateOptions{
+		Version: inspected.Service.Version,
+		Spec:    spec,
+	}); err != nil {
+		return fmt.Errorf("configure Nectar HTTPS route: %w", err)
+	}
+	return nil
 }
 
 func (i *Inspector) ensureIngressNetwork(ctx context.Context) (string, error) {
@@ -104,7 +173,7 @@ func (i *Inspector) ensureIngressNetwork(ctx context.Context) (string, error) {
 		Driver:     "overlay",
 		Scope:      "swarm",
 		Attachable: true,
-		Labels:     map[string]string{"io.dock-weaver.managed": "true"},
+		Labels:     map[string]string{"io.nectar.managed": "true"},
 	})
 	if err != nil {
 		return "", fmt.Errorf("create ingress network: %w", err)
@@ -119,15 +188,24 @@ func (i *Inspector) ensureTraefik(ctx context.Context, networkID, acmeEmail stri
 		client.ServiceInspectOptions{},
 	)
 	if err == nil {
-		if inspected.Service.Spec.Labels["io.dock-weaver.managed"] != "true" {
-			return errors.New("dock-weaver-traefik exists but is not managed by Dock-Weaver")
+		if inspected.Service.Spec.Labels["io.nectar.managed"] != "true" {
+			return errors.New("nectar-traefik exists but is not managed by Nectar")
 		}
-		configuredEmail := inspected.Service.Spec.Labels["io.dock-weaver.acme-email"]
-		if configuredEmail != acmeEmail {
+		configuredEmail := inspected.Service.Spec.Labels["io.nectar.acme-email"]
+		if configuredEmail == acmeEmail {
+			return nil
+		}
+		if configuredEmail != "" {
 			return fmt.Errorf(
 				"Traefik is configured for ACME email %q; use the same email",
 				configuredEmail,
 			)
+		}
+		if _, err := i.client.ServiceUpdate(ctx, inspected.Service.ID, client.ServiceUpdateOptions{
+			Version: inspected.Service.Version,
+			Spec:    newTraefikServiceSpec(networkID, acmeEmail),
+		}); err != nil {
+			return fmt.Errorf("enable Traefik ACME configuration: %w", err)
 		}
 		return nil
 	}
@@ -141,7 +219,7 @@ func (i *Inspector) ensureTraefik(ctx context.Context, networkID, acmeEmail stri
 		}
 		if _, err := i.client.VolumeCreate(ctx, client.VolumeCreateOptions{
 			Name:   traefikVolumeName,
-			Labels: map[string]string{"io.dock-weaver.managed": "true"},
+			Labels: map[string]string{"io.nectar.managed": "true"},
 		}); err != nil {
 			return fmt.Errorf("create Traefik ACME volume: %w", err)
 		}
@@ -162,8 +240,8 @@ func newTraefikServiceSpec(networkID, acmeEmail string) swarm.ServiceSpec {
 		Annotations: swarm.Annotations{
 			Name: traefikServiceName,
 			Labels: map[string]string{
-				"io.dock-weaver.managed":    "true",
-				"io.dock-weaver.acme-email": acmeEmail,
+				"io.nectar.managed":    "true",
+				"io.nectar.acme-email": acmeEmail,
 			},
 		},
 		TaskTemplate: swarm.TaskSpec{
@@ -222,7 +300,7 @@ func applicationServiceSpec(spec domain.DeploymentSpec, image, networkID string)
 		Annotations: swarm.Annotations{
 			Name: spec.ServiceName,
 			Labels: map[string]string{
-				"io.dock-weaver.managed":                                        "true",
+				"io.nectar.managed":                                             "true",
 				"traefik.enable":                                                "true",
 				"traefik.swarm.network":                                         ingressNetworkName,
 				"traefik.http.routers." + router + ".rule":                      "Host(`" + spec.Domain + "`)",

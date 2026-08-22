@@ -9,7 +9,7 @@ import (
 
 	"github.com/moby/moby/api/types/swarm"
 	"github.com/moby/moby/client"
-	"github.com/ranen/dock-weaver/internal/domain"
+	"github.com/nectarops/nectar/internal/domain"
 )
 
 type Inspector struct {

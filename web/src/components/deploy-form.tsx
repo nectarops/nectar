@@ -64,7 +64,7 @@ export function DeployForm() {
           <span className="flex items-center gap-1 text-xs text-muted-foreground"><ShieldCheck aria-hidden="true" />Automatic HTTPS</span>
         </div>
         <CardDescription>
-          Dock-Weaver creates or rolls the Swarm service and provisions Traefik with Let's Encrypt on the first deployment.
+          Nectar creates or rolls the Swarm service and provisions Traefik with Let's Encrypt on the first deployment.
         </CardDescription>
       </CardHeader>
       <CardContent>

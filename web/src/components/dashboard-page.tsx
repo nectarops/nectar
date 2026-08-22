@@ -8,11 +8,13 @@ import {
   Cpu,
   Database,
   HardDrive,
+  LayoutDashboard,
   LoaderCircle,
   LogOut,
   MemoryStick,
   Network,
   RefreshCw,
+  Rocket,
   Server,
   ShieldAlert,
 } from 'lucide-react'
@@ -44,7 +46,10 @@ type DashboardPageProps = {
   onLoggedOut: () => void
 }
 
+type DashboardView = 'overview' | 'deploy'
+
 export function DashboardPage({ user, version, onLoggedOut }: DashboardPageProps) {
+  const [activeView, setActiveView] = useState<DashboardView>('overview')
   const [cluster, setCluster] = useState<ClusterSnapshot | null>(null)
   const [error, setError] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
@@ -84,34 +89,151 @@ export function DashboardPage({ user, version, onLoggedOut }: DashboardPageProps
 
   return (
     <PageFrame version={version} actions={actions}>
-      <div className="flex flex-col gap-8">
-        <section className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-          <div className="flex flex-col gap-2">
-            <p className="text-sm font-medium text-primary">Control plane overview</p>
-            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Your Swarm at a glance</h1>
-            <p className="max-w-2xl text-muted-foreground">
-              Live state reported by the Docker Engine connected to this Dock-Weaver instance.
-            </p>
-          </div>
-          <Button type="button" variant="outline" onClick={() => setRefreshKey((key) => key + 1)}>
-            <RefreshCw data-icon="inline-start" />
-            Refresh
-          </Button>
-        </section>
-
-        {error ? (
-          <Alert variant="destructive">
-            <ShieldAlert aria-hidden="true" />
-            <AlertTitle>Docker Engine is unavailable</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        ) : null}
-
-        {!cluster && !error ? <DashboardSkeleton /> : null}
-        {cluster ? <ClusterOverview cluster={cluster} /> : null}
-        {cluster?.available && cluster.swarmState === 'active' ? <DeployForm /> : null}
+      <div className="grid min-w-0 gap-8 lg:grid-cols-[13rem_minmax(0,1fr)]">
+        <DashboardNavigation activeView={activeView} onNavigate={setActiveView} />
+        <div className="min-w-0">
+          {activeView === 'overview' ? (
+            <OverviewPage
+              cluster={cluster}
+              error={error}
+              onRefresh={() => setRefreshKey((key) => key + 1)}
+            />
+          ) : (
+            <DeploymentPage
+              cluster={cluster}
+              error={error}
+              onRefresh={() => setRefreshKey((key) => key + 1)}
+            />
+          )}
+        </div>
       </div>
     </PageFrame>
+  )
+}
+
+function DashboardNavigation({
+  activeView,
+  onNavigate,
+}: {
+  activeView: DashboardView
+  onNavigate: (view: DashboardView) => void
+}) {
+  const items: Array<{ id: DashboardView; label: string; icon: typeof LayoutDashboard }> = [
+    { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+    { id: 'deploy', label: 'Deploy service', icon: Rocket },
+  ]
+
+  return (
+    <aside className="lg:sticky lg:top-6 lg:self-start">
+      <nav
+        aria-label="Control plane"
+        className="grid grid-cols-2 gap-2 rounded-xl border bg-card p-2 shadow-sm lg:grid-cols-1"
+      >
+        {items.map(({ id, label, icon: Icon }) => (
+          <Button
+            key={id}
+            type="button"
+            variant={activeView === id ? 'secondary' : 'ghost'}
+            className="w-full justify-start"
+            aria-current={activeView === id ? 'page' : undefined}
+            onClick={() => onNavigate(id)}
+          >
+            <Icon aria-hidden="true" />
+            {label}
+          </Button>
+        ))}
+      </nav>
+    </aside>
+  )
+}
+
+function OverviewPage({
+  cluster,
+  error,
+  onRefresh,
+}: {
+  cluster: ClusterSnapshot | null
+  error: string
+  onRefresh: () => void
+}) {
+  return (
+    <section className="flex flex-col gap-8">
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+        <div className="flex flex-col gap-2">
+          <p className="text-sm font-medium text-primary">Control plane overview</p>
+          <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+            Your Swarm at a glance
+          </h1>
+          <p className="max-w-2xl text-muted-foreground">
+            Live state reported by the Docker Engine connected to this Nectar instance.
+          </p>
+        </div>
+        <Button type="button" variant="outline" onClick={onRefresh}>
+          <RefreshCw data-icon="inline-start" />
+          Refresh
+        </Button>
+      </div>
+
+      {error ? <ClusterError message={error} /> : null}
+      {!cluster && !error ? <DashboardSkeleton /> : null}
+      {cluster ? <ClusterOverview cluster={cluster} /> : null}
+    </section>
+  )
+}
+
+function DeploymentPage({
+  cluster,
+  error,
+  onRefresh,
+}: {
+  cluster: ClusterSnapshot | null
+  error: string
+  onRefresh: () => void
+}) {
+  const canDeploy = cluster?.available && cluster.swarmState === 'active'
+
+  return (
+    <section className="flex flex-col gap-8">
+      <div className="flex flex-col gap-2">
+        <p className="text-sm font-medium text-primary">Application delivery</p>
+        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Deploy services</h1>
+        <p className="max-w-2xl text-muted-foreground">
+          Create a versioned Swarm service or roll an existing service forward.
+        </p>
+      </div>
+
+      {error ? <ClusterError message={error} /> : null}
+      {!cluster && !error ? <DashboardSkeleton /> : null}
+      {canDeploy ? <DeployForm /> : null}
+      {cluster && !canDeploy ? (
+        <Alert>
+          <ShieldAlert aria-hidden="true" />
+          <AlertTitle>Swarm must be active before deploying</AlertTitle>
+          <AlertDescription className="flex flex-col items-start gap-4">
+            <p>
+              {cluster.available
+                ? 'The connected Docker Engine is not an active Swarm manager. Initialize or join a Swarm, then refresh the cluster status.'
+                : cluster.error ??
+                  'Connect Nectar to a Docker Engine before deploying services.'}
+            </p>
+            <Button type="button" variant="outline" size="sm" onClick={onRefresh}>
+              <RefreshCw data-icon="inline-start" />
+              Refresh cluster status
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+    </section>
+  )
+}
+
+function ClusterError({ message }: { message: string }) {
+  return (
+    <Alert variant="destructive">
+      <ShieldAlert aria-hidden="true" />
+      <AlertTitle>Docker Engine is unavailable</AlertTitle>
+      <AlertDescription>{message}</AlertDescription>
+    </Alert>
   )
 }
 

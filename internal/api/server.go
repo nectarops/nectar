@@ -8,10 +8,11 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
-	"github.com/ranen/dock-weaver/internal/application"
-	"github.com/ranen/dock-weaver/internal/domain"
+	"github.com/nectarops/nectar/internal/application"
+	"github.com/nectarops/nectar/internal/domain"
 )
 
 const sessionCookieName = "dw_session"
@@ -154,6 +155,8 @@ type setupRequest struct {
 	InitToken string `json:"initToken"`
 	Username  string `json:"username"`
 	Password  string `json:"password"`
+	Domain    string `json:"domain"`
+	ACMEEmail string `json:"acmeEmail"`
 }
 
 func (s *Server) handleSetupComplete(w http.ResponseWriter, r *http.Request) {
@@ -167,13 +170,17 @@ func (s *Server) handleSetupComplete(w http.ResponseWriter, r *http.Request) {
 		InitToken: request.InitToken,
 		Username:  request.Username,
 		Password:  request.Password,
+		ManagementAccess: domain.ManagementAccess{
+			Domain:    request.Domain,
+			ACMEEmail: request.ACMEEmail,
+		},
 	})
 	if err != nil {
 		s.handleAuthError(w, err)
 		return
 	}
 
-	s.setSessionCookie(w, result)
+	s.setSessionCookie(w, r, result)
 	writeJSON(w, http.StatusCreated, result.User)
 }
 
@@ -195,7 +202,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.setSessionCookie(w, result)
+	s.setSessionCookie(w, r, result)
 	writeJSON(w, http.StatusOK, result.User)
 }
 
@@ -262,7 +269,11 @@ func (s *Server) handleAuthError(w http.ResponseWriter, err error) {
 	}
 }
 
-func (s *Server) setSessionCookie(w http.ResponseWriter, result application.AuthResult) {
+func (s *Server) setSessionCookie(
+	w http.ResponseWriter,
+	r *http.Request,
+	result application.AuthResult,
+) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    result.Session.Token,
@@ -270,9 +281,17 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, result application.Auth
 		Expires:  result.Session.ExpiresAt,
 		MaxAge:   int(time.Until(result.Session.ExpiresAt).Seconds()),
 		HttpOnly: true,
-		Secure:   s.cookieSecure,
+		Secure:   s.cookieSecure || requestUsesHTTPS(r),
 		SameSite: http.SameSiteLaxMode,
 	})
+}
+
+func requestUsesHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	forwardedProto := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0])
+	return strings.EqualFold(forwardedProto, "https")
 }
 
 func (s *Server) clearSessionCookie(w http.ResponseWriter) {

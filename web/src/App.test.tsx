@@ -25,6 +25,9 @@ test('shows setup when the instance is not configured', async () => {
 
   expect(await screen.findByRole('heading', { name: 'Secure your control plane' })).toBeInTheDocument()
   expect(screen.getByLabelText('One-time setup token')).toBeInTheDocument()
+  expect(screen.getByLabelText('Password')).toHaveAttribute('minLength', '5')
+  expect(screen.getByLabelText('Confirm password')).toHaveAttribute('minLength', '5')
+  expect(screen.getByText('Use at least 5 characters.')).toBeInTheDocument()
 })
 
 test('shows login when setup is complete and there is no session', async () => {

@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 
-# Dock-Weaver Product and Technical Plan
+# Nectar Product and Technical Plan
 
 > Document status: Draft 0.2
 > Goal: initialize a Linux server as a Docker Swarm Manager, then use a Web interface to enroll nodes, standardize Docker versions, provide automatic HTTPS through Traefik, and deploy explicit application image versions.
@@ -9,14 +9,14 @@ This document describes the intended product and architecture. Features that are
 
 ## 1. Product Positioning
 
-Dock-Weaver is a lightweight Docker Swarm management tool built around a simple model: install the control plane first, then expand the cluster from that control plane.
+Nectar is a lightweight Docker Swarm management tool built around a simple model: install the control plane first, then expand the cluster from that control plane.
 
 It addresses five core needs:
 
-1. An operator can choose a Docker Engine version, install Docker on the first server, initialize Swarm, and deploy Dock-Weaver.
-2. Dock-Weaver provides a Web management interface, so routine work does not require handwritten Swarm commands.
-3. An operator can add Linux servers over SSH; Dock-Weaver checks the environment, installs the same Docker version, and joins each server to the Swarm.
-4. Dock-Weaver installs and manages Traefik, discovers routes from service labels, and obtains and renews HTTPS certificates.
+1. An operator can choose a Docker Engine version, install Docker on the first server, initialize Swarm, and deploy Nectar.
+2. Nectar provides a Web management interface, so routine work does not require handwritten Swarm commands.
+3. An operator can add Linux servers over SSH; Nectar checks the environment, installs the same Docker version, and joins each server to the Swarm.
+4. Nectar installs and manages Traefik, discovers routes from service labels, and obtains and renews HTTPS certificates.
 5. An operator can enter an image repository, image version, and deployment settings to create or upgrade a service while observing progress, health, and rollback options.
 
 ### 1.1 Target Users
@@ -30,7 +30,7 @@ It addresses five core needs:
 - A general-purpose server administration panel.
 - Kubernetes, Nomad, or standalone Docker orchestration.
 - Domain registration. The first release only checks DNS; DNS provider API integrations come later.
-- Multiple active Dock-Weaver writers managing the same cluster.
+- Multiple active Nectar writers managing the same cluster.
 - A complete CI/CD product. The first release triggers deployments through the Web UI or API; webhooks come later.
 
 ## 2. User Experience
@@ -40,14 +40,14 @@ It addresses five core needs:
 The operator runs one command on the Linux host that will become the first Manager. After a release is published:
 
 ```bash
-curl -fsSL https://github.com/ranen/dock-weaver/releases/download/v0.1.0/install.sh \
+curl -fsSL https://github.com/nectarops/nectar/releases/download/v0.1.0/install.sh \
   | sudo bash
 ```
 
 Docker Engine version and Manager address can be supplied non-interactively:
 
 ```bash
-curl -fsSL https://github.com/ranen/dock-weaver/releases/download/v0.1.0/install.sh \
+curl -fsSL https://github.com/nectarops/nectar/releases/download/v0.1.0/install.sh \
   | sudo bash -s -- \
       --docker-version <target-version> \
       --advertise-addr <manager-static-ip> \
@@ -59,12 +59,14 @@ The installer performs these steps:
 1. Check the operating system, CPU architecture, root privileges, network ports, and existing Docker/Swarm state.
 2. Query Docker's official repository for versions available to the distribution and validate the requested version.
 3. Install pinned Docker Engine, CLI, containerd, Buildx, and Compose plugin packages.
-4. Enable Docker at boot and verify that the daemon is available.
-5. Initialize Swarm with a stable advertise address when the host is not already a member.
-6. Create required data directories, Docker secrets, and control-node labels.
-7. Start Dock-Weaver as a pinned Swarm service constrained to a labeled Manager.
-8. Wait for the Dock-Weaver readiness check.
-9. Print the exact Web setup URL, one-time initialization token, and required follow-up actions.
+4. Merge and validate bounded `json-file` log rotation in `/etc/docker/daemon.json`, then restart Docker only if that file changed.
+5. Enable Docker at boot and verify that the daemon is available.
+6. Initialize Swarm with a stable advertise address when the host is not already a member.
+7. Create the `traefik-public` network, persistent ACME volume, and pinned baseline Traefik service on ports 80 and 443.
+8. Create required data directories, Docker secrets, and control-node labels.
+9. Start Nectar as a pinned Swarm service constrained to a labeled Manager.
+10. Wait for the Nectar readiness check.
+11. Print the exact Web setup URL, one-time initialization token, and required follow-up actions.
 
 If Docker is already installed, the installer must never replace it silently. It must show the current and requested versions and require explicit authorization before an upgrade or downgrade.
 
@@ -82,6 +84,8 @@ The complete first-run wizard is intended to cover:
 6. Run cluster health checks and enter the overview.
 
 The initialization token must become unusable after setup and must never appear in ordinary application logs.
+
+The current alpha implements the Owner account plus optional management domain and ACME email. Initial access uses `IP:8080`; when both optional values are supplied, Nectar enables Traefik ACME and adds the HTTPS route before committing setup to SQLite. The published IP port remains available for recovery.
 
 ### 2.3 Adding a Server
 
@@ -130,9 +134,9 @@ The first release provides two deployment paths.
 
 #### Stack YAML
 
-Advanced operators can import a Compose file compatible with `docker stack deploy`. Before saving, Dock-Weaver validates its schema, images, networks, secret references, and Traefik labels and shows the resulting diff.
+Advanced operators can import a Compose file compatible with `docker stack deploy`. Before saving, Nectar validates its schema, images, networks, secret references, and Traefik labels and shows the resulting diff.
 
-After **Deploy** is selected, Dock-Weaver:
+After **Deploy** is selected, Nectar:
 
 1. Normalizes and validates the deployment specification.
 2. Validates private-registry credentials and the image manifest when applicable.
@@ -154,7 +158,7 @@ Policy:  start-first, parallelism=1, automatic rollback on failure
 
 ```mermaid
 flowchart LR
-    U[Administrator browser] -->|HTTPS / REST / SSE| W[Dock-Weaver Web + API]
+    U[Administrator browser] -->|HTTPS / REST / SSE| W[Nectar Web + API]
     W --> DB[(SQLite)]
     W -->|Docker Engine API| S[Swarm Manager]
     W -->|SSH| N1[Worker / Manager node]
@@ -178,12 +182,12 @@ flowchart LR
 
 ### 3.2 Runtime Unit
 
-The first release uses one Dock-Weaver service replica for its API, Web UI, and operation worker, with these constraints:
+The first release uses one Nectar service replica for its API, Web UI, and operation worker, with these constraints:
 
 - `node.role == manager`
-- `node.labels.dock-weaver.control == true`
+- `node.labels.nectar.control == true`
 
-This keeps state ownership clear. If Dock-Weaver is temporarily unavailable, running Swarm services continue, but new deployments, upgrades, and scaling operations pause.
+This keeps state ownership clear. If Nectar is temporarily unavailable, running Swarm services continue, but new deployments, upgrades, and scaling operations pause.
 
 ### 3.3 High-Availability Path
 
@@ -204,9 +208,11 @@ Responsibilities:
 - Initially support Ubuntu and Debian; add RHEL-family distributions later.
 - Install through the distribution package manager and Docker's official repositories rather than static production binaries.
 - Map the requested Engine semantic version to the distribution-specific package version.
+- Preserve unrelated Docker daemon settings while enforcing `json-file` rotation at 100 MB with three compressed files.
+- Validate the merged daemon configuration and protect Manager quorum before any required Docker restart.
 - Provide `--dry-run` to report checks and planned changes without mutation.
 - Publish root-level `install.sh` as a GitHub Release asset for the `curl -fsSL <release-url>/install.sh | sudo bash` flow.
-- Support non-interactive `--docker-version`, `--advertise-addr`, `--web-port`, `--dock-weaver-version`, and `--dry-run` options.
+- Support non-interactive `--docker-version`, `--advertise-addr`, `--web-port`, `--nectar-version`, and `--dry-run` options.
 - Be safe to rerun after interruption by detecting completed work.
 - Record only non-sensitive installation logs and print a clear resume command after failure.
 - Poll `/health/ready` after deploying the Swarm service.
@@ -438,7 +444,7 @@ Security-group checks must go beyond local listening sockets and test both Manag
 
 - Existing tasks continue under Swarm. When Manager quorum is lost, new management operations are unavailable.
 - Back up SQLite, instance encryption material, and `/var/lib/docker/swarm`; Swarm backups must follow consistency requirements.
-- Recovery documentation must cover Dock-Weaver restoration, single-Manager restoration, quorum reconstruction, and Traefik/certificate verification.
+- Recovery documentation must cover Nectar restoration, single-Manager restoration, quorum reconstruction, and Traefik/certificate verification.
 
 ## 10. Observability
 
@@ -449,7 +455,7 @@ MVP signals:
 - Deployment duration and success, failure, and rollback counts.
 - SSH operation duration and error classes.
 - Certificate lifetime and latest renewal result.
-- Docker, Traefik, and Dock-Weaver version distribution.
+- Docker, Traefik, and Nectar version distribution.
 
 Expose `/health/live`, `/health/ready`, and Prometheus `/metrics`. Correlate logs with `request_id`, `operation_id`, and `release_id`, and never log secret values.
 
@@ -470,7 +476,7 @@ Acceptance: an operator can sign in, persist configuration, and view cluster sta
 Deliverables:
 
 - Ubuntu/Debian installer with optional pinned Docker version.
-- Swarm initialization and Dock-Weaver service deployment.
+- Swarm initialization and Nectar service deployment.
 - Read-only node, service, task, and network views.
 
 Acceptance: a clean host can be installed from scratch and the browser correctly displays a single-Manager Swarm.
@@ -550,6 +556,7 @@ The MVP is complete only when all of these conditions are satisfied:
 | Application orchestration | Swarm services/stacks | Matches the product and preserves the Compose mental model |
 | Ingress | Traefik Swarm provider | Discovers routes from service labels |
 | MVP ACME | HTTP-01 + one Traefik replica | File-backed ACME storage is not safe for concurrent writers |
+| First management access | `IP:8080`, optional domain during setup | Keeps bootstrap recoverable while enabling HTTPS immediately after DNS is ready |
 | Deployment version | Tag as input, digest in storage | Balances usability and repeatability |
 | Long-running feedback | Durable operations + SSE | Work survives refresh while the UI receives live events |
 
@@ -558,11 +565,10 @@ The MVP is complete only when all of these conditions are satisfied:
 These choices do not block the architecture, but each must be resolved before its implementation phase:
 
 1. Whether the first release supports Ubuntu only or Ubuntu and Debian.
-2. Whether first access uses `IP:8080` or requires a management domain during installation.
-3. Whether SSH passwords may be persisted or are always single-use.
-4. Whether the simple form supports multi-service applications. The current recommendation is one service per application, with Stack YAML for advanced use.
-5. Whether the first private-registry implementation targets generic Registry V2 only or adds vendor-specific integrations.
-6. Whether existing Swarm services can be imported and managed. The recommendation is read-only discovery followed by explicit adoption.
+2. Whether SSH passwords may be persisted or are always single-use.
+3. Whether the simple form supports multi-service applications. The current recommendation is one service per application, with Stack YAML for advanced use.
+4. Whether the first private-registry implementation targets generic Registry V2 only or adds vendor-specific integrations.
+5. Whether existing Swarm services can be imported and managed. The recommendation is read-only discovery followed by explicit adoption.
 
 ## 16. Implementation References
 
@@ -584,13 +590,13 @@ Official references:
 
 ## 17. Open Source and License
 
-Dock-Weaver is permanently free, fully open-source, and self-hosted under `AGPL-3.0-only`.
+Nectar is permanently free, fully open-source, and self-hosted under `AGPL-3.0-only`.
 
 Project principles:
 
 - Never charge by server, Swarm node, user, or application count.
 - Node installation, cluster management, Traefik, automatic HTTPS, deployment, rolling updates, and rollback remain free core capabilities.
-- Never require a Dock-Weaver cloud service for core operation.
+- Never require a Nectar cloud service for core operation.
 - Do not enable telemetry without informed consent, and never collect server credentials, application secrets, or business data.
 - Official container images must be reproducible from public source and release tags.
 - The Web UI must expose a clear source-code link and the running version/commit so users can obtain corresponding source.

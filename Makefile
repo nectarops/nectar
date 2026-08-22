@@ -5,7 +5,7 @@ SHELL := /bin/sh
 .PHONY: help dev install-web format format-check lint typecheck test test-race build build-web build-go verify clean
 
 help:
-	@printf '%s\n' 'Dock-Weaver development targets:'
+	@printf '%s\n' 'Nectar development targets:'
 	@printf '%s\n' '  make dev          Build and start the local web application'
 	@printf '%s\n' '  make install-web  Install pinned frontend dependencies'
 	@printf '%s\n' '  make format       Format Go source'
@@ -44,13 +44,13 @@ build-web:
 
 build-go:
 	mkdir -p bin
-	go build -o bin/dock-weaver ./cmd/dock-weaver
+	go build -o bin/nectar ./cmd/nectar
 
 build:
 	npm --prefix web run build
 	./scripts/sync-web-assets.sh
 	mkdir -p bin
-	go build -o bin/dock-weaver ./cmd/dock-weaver
+	go build -o bin/nectar ./cmd/nectar
 
 verify: format-check lint typecheck test test-race build
 
