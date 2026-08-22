@@ -23,8 +23,8 @@ const (
 )
 
 func HashPassword(password string) (string, error) {
-	if len(password) < 12 {
-		return "", errors.New("password must contain at least 12 characters")
+	if len(password) < 5 {
+		return "", errors.New("password must contain at least 5 characters")
 	}
 
 	salt := make([]byte, argonSaltLength)

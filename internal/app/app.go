@@ -11,11 +11,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ranen/dock-weaver/internal/api"
-	"github.com/ranen/dock-weaver/internal/application"
-	"github.com/ranen/dock-weaver/internal/config"
-	dockeradapter "github.com/ranen/dock-weaver/internal/docker"
-	"github.com/ranen/dock-weaver/internal/store"
+	"github.com/nectarops/nectar/internal/api"
+	"github.com/nectarops/nectar/internal/application"
+	"github.com/nectarops/nectar/internal/config"
+	dockeradapter "github.com/nectarops/nectar/internal/docker"
+	"github.com/nectarops/nectar/internal/store"
 )
 
 func Run(
@@ -43,21 +43,13 @@ func Run(
 		return err
 	}
 	if !configured && cfg.InitToken == "" {
-		return errors.New("DW_INIT_TOKEN or DW_INIT_TOKEN_FILE is required before first setup")
-	}
-
-	authService, err := application.NewAuthService(
-		database,
-		cfg.InitToken,
-		cfg.SessionDuration,
-	)
-	if err != nil {
-		return err
+		return errors.New("NECTAR_INIT_TOKEN or NECTAR_INIT_TOKEN_FILE is required before first setup")
 	}
 
 	inspector, inspectorErr := dockeradapter.NewInspector(cfg.DockerTimeout)
 	var clusterReader application.ClusterReader
 	var deploymentEngine application.DeploymentEngine
+	var accessConfigurator application.ManagementAccessConfigurator
 	var dockerReadiness api.Readiness
 	if inspectorErr != nil {
 		if cfg.RequireDocker {
@@ -67,6 +59,7 @@ func Run(
 		unavailable := dockeradapter.NewUnavailableInspector(inspectorErr)
 		clusterReader = unavailable
 		deploymentEngine = unavailable
+		accessConfigurator = unavailable
 	} else {
 		defer func() {
 			if err := inspector.Close(); err != nil {
@@ -75,7 +68,18 @@ func Run(
 		}()
 		clusterReader = inspector
 		deploymentEngine = inspector
+		accessConfigurator = inspector
 		dockerReadiness = inspector
+	}
+
+	authService, err := application.NewAuthService(
+		database,
+		accessConfigurator,
+		cfg.InitToken,
+		cfg.SessionDuration,
+	)
+	if err != nil {
+		return err
 	}
 
 	clusterService, err := application.NewClusterService(clusterReader)
@@ -116,7 +120,7 @@ func Run(
 
 	serveErrors := make(chan error, 1)
 	go func() {
-		logger.Info("Dock-Weaver listening", "address", cfg.Address)
+		logger.Info("Nectar listening", "address", cfg.Address)
 		serveErrors <- httpServer.ListenAndServe()
 	}()
 

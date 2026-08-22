@@ -10,14 +10,14 @@ import (
 func TestPasswordRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	hash, err := HashPassword("a strong password")
+	hash, err := HashPassword("12345")
 	if err != nil {
 		t.Fatalf("HashPassword() error = %v", err)
 	}
-	if !VerifyPassword(hash, "a strong password") {
+	if !VerifyPassword(hash, "12345") {
 		t.Fatal("VerifyPassword() rejected the original password")
 	}
-	if VerifyPassword(hash, "a different password") {
+	if VerifyPassword(hash, "54321") {
 		t.Fatal("VerifyPassword() accepted a different password")
 	}
 }
@@ -25,7 +25,7 @@ func TestPasswordRoundTrip(t *testing.T) {
 func TestHashPasswordRejectsShortPassword(t *testing.T) {
 	t.Parallel()
 
-	if _, err := HashPassword("too short"); err == nil {
+	if _, err := HashPassword("1234"); err == nil {
 		t.Fatal("HashPassword() accepted a short password")
 	}
 }

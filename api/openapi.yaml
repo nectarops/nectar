@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 openapi: 3.1.0
 info:
-  title: Dock-Weaver API
+  title: Nectar API
   version: 0.1.0
   license:
     name: AGPL-3.0-only
@@ -56,7 +56,9 @@ paths:
               properties:
                 initToken: { type: string, writeOnly: true }
                 username: { type: string, minLength: 3, maxLength: 32 }
-                password: { type: string, minLength: 12, writeOnly: true }
+                password: { type: string, minLength: 5, writeOnly: true }
+                domain: { type: string, description: Optional management FQDN; requires acmeEmail. }
+                acmeEmail: { type: string, format: email, description: Required with domain. }
       responses:
         "201": { $ref: "#/components/responses/User" }
         "400": { $ref: "#/components/responses/Error" }

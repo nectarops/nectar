@@ -6,31 +6,31 @@ set -eu
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$project_root"
 
-address=${DW_ADDR:-127.0.0.1:8080}
-data_dir=${DW_DATA_DIR:-${TMPDIR:-/tmp}/dock-weaver-dev}
-require_docker=${DW_REQUIRE_DOCKER:-false}
-cookie_secure=${DW_COOKIE_SECURE:-false}
+address=${NECTAR_ADDR:-127.0.0.1:8080}
+data_dir=${NECTAR_DATA_DIR:-$project_root/.data}
+require_docker=${NECTAR_REQUIRE_DOCKER:-false}
+cookie_secure=${NECTAR_COOKIE_SECURE:-false}
 build=true
 open_browser=true
 
 usage() {
 	cat <<'EOF'
-Start Dock-Weaver locally with one command.
+Start Nectar locally with one command.
 
 Usage:
   ./scripts/dev.sh [options]
 
 Options:
   --addr ADDRESS       Listen address (default: 127.0.0.1:8080)
-  --data-dir PATH      Runtime data directory (default: system temp directory)
+  --data-dir PATH      Runtime data directory (default: project .data directory)
   --require-docker     Fail startup unless the Docker Engine is available
-  --skip-build         Reuse the existing bin/dock-weaver binary
+  --skip-build         Reuse the existing bin/nectar binary
   --no-open            Do not open the web page automatically
   -h, --help           Show this help
 
 Environment variables:
-  DW_ADDR, DW_DATA_DIR, DW_INIT_TOKEN, DW_INIT_TOKEN_FILE,
-  DW_COOKIE_SECURE, and DW_REQUIRE_DOCKER override the defaults.
+  NECTAR_ADDR, NECTAR_DATA_DIR, NECTAR_INIT_TOKEN, NECTAR_INIT_TOKEN_FILE,
+  NECTAR_COOKIE_SECURE, and NECTAR_REQUIRE_DOCKER override the defaults.
 EOF
 }
 
@@ -87,18 +87,18 @@ done
 
 case "$require_docker" in
 true | false) ;;
-*) die "DW_REQUIRE_DOCKER must be true or false" ;;
+*) die "NECTAR_REQUIRE_DOCKER must be true or false" ;;
 esac
 
 case "$cookie_secure" in
 true | false) ;;
-*) die "DW_COOKIE_SECURE must be true or false" ;;
+*) die "NECTAR_COOKIE_SECURE must be true or false" ;;
 esac
 
 mkdir -p "$data_dir"
 
-token=${DW_INIT_TOKEN:-}
-token_file=${DW_INIT_TOKEN_FILE:-}
+token=${NECTAR_INIT_TOKEN:-}
+token_file=${NECTAR_INIT_TOKEN_FILE:-}
 if [ -z "$token" ]; then
 	if [ -z "$token_file" ]; then
 		token_file=$data_dir/bootstrap-token
@@ -134,8 +134,8 @@ if [ "$build" = true ]; then
 	make install-web
 	printf '%s\n' 'Building the web application and Go server...'
 	make build
-elif [ ! -x ./bin/dock-weaver ]; then
-	die "bin/dock-weaver does not exist; run without --skip-build first"
+elif [ ! -x ./bin/nectar ]; then
+	die "bin/nectar does not exist; run without --skip-build first"
 fi
 
 case "$address" in
@@ -150,15 +150,15 @@ if command -v git >/dev/null 2>&1; then
 	commit=$(git rev-parse --short HEAD 2>/dev/null || printf '%s' dev)
 fi
 
-export DW_ADDR="$address"
-export DW_DATA_DIR="$data_dir"
-export DW_INIT_TOKEN="$token"
-export DW_COOKIE_SECURE="$cookie_secure"
-export DW_REQUIRE_DOCKER="$require_docker"
-export DW_VERSION="${DW_VERSION:-dev}"
-export DW_COMMIT="${DW_COMMIT:-$commit}"
+export NECTAR_ADDR="$address"
+export NECTAR_DATA_DIR="$data_dir"
+export NECTAR_INIT_TOKEN="$token"
+export NECTAR_COOKIE_SECURE="$cookie_secure"
+export NECTAR_REQUIRE_DOCKER="$require_docker"
+export NECTAR_VERSION="${NECTAR_VERSION:-dev}"
+export NECTAR_COMMIT="${NECTAR_COMMIT:-$commit}"
 
-printf '\nDock-Weaver is starting.\n'
+printf '\nNectar is starting.\n'
 printf '  Web:          %s\n' "$web_url"
 printf '  Data:         %s\n' "$data_dir"
 printf '  Setup token:  %s\n' "$token"
@@ -192,4 +192,4 @@ if [ "$open_browser" = true ]; then
 	fi
 fi
 
-exec ./bin/dock-weaver
+exec ./bin/nectar

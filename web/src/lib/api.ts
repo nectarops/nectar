@@ -123,6 +123,8 @@ export async function completeSetup(input: {
   initToken: string
   username: string
   password: string
+  domain: string
+  acmeEmail: string
 }) {
   return parseUser(await request('/api/v1/setup/complete', {
     method: 'POST',

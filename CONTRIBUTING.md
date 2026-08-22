@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 
-# Contributing to Dock-Weaver
+# Contributing to Nectar
 
 Thank you for helping build a small, auditable Docker Swarm control plane.
 

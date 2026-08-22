@@ -14,4 +14,4 @@ Maintainers aim to acknowledge a report within 3 business days, provide an initi
 
 ## Operational security
 
-Docker socket access is root-equivalent. Run Dock-Weaver only on a trusted Manager, restrict network access to setup and administration, use strong owner credentials, delete the bootstrap-token file after setup, back up SQLite securely, and keep Docker, Traefik, the host kernel, and Dock-Weaver patched.
+Docker socket access is root-equivalent. Run Nectar only on a trusted Manager, restrict network access to setup and administration, use strong owner credentials, delete the bootstrap-token file after setup, back up SQLite securely, and keep Docker, Traefik, the host kernel, and Nectar patched.

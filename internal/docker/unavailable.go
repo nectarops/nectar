@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/ranen/dock-weaver/internal/domain"
+	"github.com/nectarops/nectar/internal/domain"
 )
 
 type UnavailableInspector struct {
@@ -37,4 +37,11 @@ func (i *UnavailableInspector) Deploy(
 	domain.DeploymentSpec,
 ) (domain.DeploymentResult, error) {
 	return domain.DeploymentResult{}, errors.New(i.reason)
+}
+
+func (i *UnavailableInspector) ConfigureManagementAccess(
+	context.Context,
+	domain.ManagementAccess,
+) error {
+	return errors.New(i.reason)
 }

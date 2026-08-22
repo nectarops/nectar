@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 
-# Dock-Weaver
+# Nectar
 
-Dock-Weaver is a free, self-hosted Docker Swarm control plane for small and medium-sized teams. It provides a focused Web interface for initializing an owner account, inspecting a real Swarm Manager, and deploying versioned container images behind Traefik with automatic Let's Encrypt HTTPS.
+Nectar is a free, self-hosted Docker Swarm control plane for small and medium-sized teams. It provides a focused Web interface for initializing an owner account, inspecting a real Swarm Manager, and deploying versioned container images behind Traefik with automatic Let's Encrypt HTTPS.
 
 There is no hosted account, node-count license, telemetry requirement, or paid feature gate. The backend is Go; the embedded Web application is React, TypeScript, Vite, Tailwind CSS, and shadcn/ui.
 
@@ -12,13 +12,15 @@ There is no hosted account, node-count license, telemetry requirement, or paid f
 
 - A single idempotent Ubuntu/Debian host installer with explicit Docker Engine version selection.
 - Safe handling of an existing Docker installation: version changes require `--force-docker-version`.
+- Safe merging and validation of bounded Docker `json-file` log rotation in `/etc/docker/daemon.json`.
 - Swarm initialization without forcing a host out of an existing cluster.
+- Baseline Traefik `v3.7.1` installation on ports 80 and 443 before the first Web visit.
 - A one-time bootstrap token and Argon2id-protected owner account.
 - SQLite persistence in WAL mode with embedded, ordered migrations.
 - HttpOnly session cookies, strict JSON decoding, same-origin mutation checks, and security headers.
 - Live Docker Engine and Swarm status through the official Moby Go client.
 - Versioned image deployment through the Docker Engine API; implicit `latest` is rejected.
-- Automatic creation of an attachable overlay network and Traefik `v3.7.1`.
+- Optional management-domain setup with Traefik routing and Let's Encrypt HTTP-01 HTTPS.
 - HTTP-to-HTTPS redirects and Let's Encrypt HTTP-01 certificates for deployed domains.
 - Start-first rolling updates with Docker-native rollback on failure.
 - A reproducible multi-stage container build and an embedded single-binary Web application.
@@ -27,37 +29,52 @@ There is no hosted account, node-count license, telemetry requirement, or paid f
 
 The host installer currently supports Ubuntu and Debian with systemd and `apt`, on `amd64` and `arm64`. It accepts a new host, an existing Swarm Manager, or an existing compatible Docker Engine.
 
-Dock-Weaver must run on a Swarm Manager with access to `/var/run/docker.sock`. Docker socket access is equivalent to root access; isolate the control-plane host and restrict access to Dock-Weaver.
+Nectar must run on a Swarm Manager with access to `/var/run/docker.sock`. Docker socket access is equivalent to root access; isolate the control-plane host and restrict access to Nectar.
 
 ## Installation
 
 No public container image or GitHub release is assumed to exist until the repository publishes `v0.1.0`. For a published release, the intended one-line flow is:
 
 ```bash
-curl -fsSL https://github.com/ranen/dock-weaver/releases/download/v0.1.0/install.sh \
+curl -fsSL https://github.com/nectarops/nectar/releases/download/v0.1.0/install.sh \
   | sudo bash -s -- \
       --docker-version 29.0.1 \
       --advertise-addr 192.0.2.10 \
-      --dock-weaver-version 0.1.0
+      --nectar-version 0.1.0
 ```
 
 The safer inspect-and-verify flow is:
 
 ```bash
-curl -fLO https://github.com/ranen/dock-weaver/releases/download/v0.1.0/install.sh
-curl -fLO https://github.com/ranen/dock-weaver/releases/download/v0.1.0/SHA256SUMS
+curl -fLO https://github.com/nectarops/nectar/releases/download/v0.1.0/install.sh
+curl -fLO https://github.com/nectarops/nectar/releases/download/v0.1.0/SHA256SUMS
 sha256sum --check --ignore-missing SHA256SUMS
 less install.sh
 sudo bash install.sh --dry-run --advertise-addr 192.0.2.10
 sudo bash install.sh --advertise-addr 192.0.2.10
 ```
 
-Run `bash install.sh --help` for all options. The installer prints the exact Web URL and a one-time setup token after readiness succeeds. Delete the root-readable resume copy at `/var/lib/dock-weaver/bootstrap-token` after setup.
+Run `bash install.sh --help` for all options. The installer preserves unrelated Docker daemon settings, applies this log policy, validates the merged JSON with `dockerd`, and restarts Docker only when the file changed:
 
-To test an unpublished image, build and push it under a pinned tag, then set `DOCK_WEAVER_IMAGE`:
+```json
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "100m",
+    "max-file": "3",
+    "compress": "true"
+  }
+}
+```
+
+It then initializes Swarm when needed, creates `traefik-public`, installs a pinned baseline Traefik service, deploys Nectar, and prints the exact Web URL and one-time setup token after readiness succeeds. Delete the root-readable resume copy at `/var/lib/nectar/bootstrap-token` after setup. Docker logging defaults apply to containers created after the daemon restart; existing containers keep their original logging configuration.
+
+On the first visit, open the printed `http://<manager-ip>:<port>` URL and create the Owner account. You can also enter a management domain and Let's Encrypt email. Before submitting those optional fields, point the domain to the host and allow inbound TCP 80 and 443. Nectar enables Traefik ACME and attaches an HTTPS route to its own Swarm service. The IP-and-port URL remains available as a recovery path; sign in again when opening the domain because browser cookies are scoped to each host.
+
+To test an unpublished image, build and push it under a pinned tag, then set `NECTAR_IMAGE`:
 
 ```bash
-sudo DOCK_WEAVER_IMAGE=registry.example.com/ops/dock-weaver:0.1.0 \
+sudo NECTAR_IMAGE=registry.example.com/ops/nectar:0.1.0 \
   bash install.sh --advertise-addr 192.0.2.10
 ```
 
@@ -72,7 +89,7 @@ Before deploying, ensure that:
 - The image is reachable from every node that might run the service.
 - The application listens on the container port entered in the form.
 
-On the first application deployment, Dock-Weaver creates Traefik and the `traefik-public` network. Later submissions with the same service name perform a rolling service update.
+The host installer creates Traefik and the `traefik-public` network. Application deployments reuse that ingress service. Later submissions with the same service name perform a rolling service update.
 
 ## Local development
 
@@ -84,9 +101,11 @@ For a one-command local preview, run:
 make dev
 ```
 
-The development launcher installs the pinned web dependencies, builds the embedded React application and Go binary, creates an isolated database under the system temporary directory, prints a first-run setup token, starts the server at `http://127.0.0.1:8080`, and opens the page in the default browser. Docker is optional for UI development; the cluster panel reports Docker as unavailable when the Engine is not running.
+The development launcher installs the pinned web dependencies, builds the embedded React application and Go binary, keeps its SQLite database and bootstrap token under the project `.data` directory, starts the server at `http://127.0.0.1:8080`, and opens the page in the default browser. The same owner and session data are reused on later starts. Docker is optional for UI development; the cluster panel reports Docker as unavailable when the Engine is not running. Press `Ctrl+C` in the terminal running `make dev` to stop it.
 
 Use `./scripts/dev.sh --help` to select another address or data directory, require Docker, reuse an existing build, or disable automatic browser opening.
+
+`install.sh` changes a Linux host and cannot be exercised faithfully by `make dev` on macOS. Use `sudo bash install.sh --dry-run --advertise-addr <linux-host-ip>` in a disposable Ubuntu/Debian VM first, then run it without `--dry-run` for a real installation.
 
 Run all project checks:
 
@@ -106,16 +125,16 @@ Build the embedded production binary:
 ```bash
 npm --prefix web run build
 cp -R web/dist/. internal/webassets/dist/
-go build -o bin/dock-weaver ./cmd/dock-weaver
+go build -o bin/nectar ./cmd/nectar
 ```
 
 For a local server without a Docker daemon:
 
 ```bash
-DW_ADDR=127.0.0.1:8080 \
-DW_DATA_DIR="$(mktemp -d)" \
-DW_INIT_TOKEN=replace-with-a-random-token \
-./bin/dock-weaver
+NECTAR_ADDR=127.0.0.1:8080 \
+NECTAR_DATA_DIR="$(mktemp -d)" \
+NECTAR_INIT_TOKEN=replace-with-a-random-token \
+./bin/nectar
 ```
 
 Canonical checks are exposed through the [Makefile](Makefile). Frontend dependencies are pinned in `web/package.json` and `web/pnpm-lock.yaml`; Go dependencies are pinned by `go.mod` and `go.sum`.
@@ -128,7 +147,7 @@ The process embeds the React build, owns SQLite state, talks to the local Manage
 
 ## Security
 
-Read [SECURITY.md](SECURITY.md) before exposing Dock-Weaver. Protect the Docker socket, do not expose the bootstrap token, and keep the initial HTTP setup port on a trusted network until the control plane is behind HTTPS.
+Read [SECURITY.md](SECURITY.md) before exposing Nectar. Protect the Docker socket, do not expose the bootstrap token, and keep the initial HTTP setup port on a trusted network until the control plane is behind HTTPS.
 
 Report vulnerabilities privately through GitHub's security-advisory interface. Do not open public issues containing credentials, host fingerprints, Docker tokens, private registry details, or production logs with secrets.
 
@@ -138,4 +157,4 @@ Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), follow
 
 ## License
 
-Dock-Weaver is licensed under the [GNU Affero General Public License v3.0 only](LICENSE), expressed as `AGPL-3.0-only`. If you modify Dock-Weaver and let users interact with it over a network, the AGPL requires that those users can obtain the corresponding source.
+Nectar is licensed under the [GNU Affero General Public License v3.0 only](LICENSE), expressed as `AGPL-3.0-only`. If you modify Nectar and let users interact with it over a network, the AGPL requires that those users can obtain the corresponding source.

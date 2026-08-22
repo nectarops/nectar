@@ -2,7 +2,7 @@
 
 # Code of Conduct
 
-Dock-Weaver contributors must make participation respectful and harassment-free regardless of age, disability, ethnicity, gender identity or expression, experience level, nationality, appearance, race, religion, sexual identity, or orientation.
+Nectar contributors must make participation respectful and harassment-free regardless of age, disability, ethnicity, gender identity or expression, experience level, nationality, appearance, race, religion, sexual identity, or orientation.
 
 Expected behavior includes constructive technical disagreement, empathy, clear boundaries, and a focus on the community's best interests. Harassment, threats, doxxing, sexualized attention, sustained disruption, or publishing another person's private information are unacceptable.
 

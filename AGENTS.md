@@ -1,10 +1,10 @@
-# Dock-Weaver Repository Instructions
+# Nectar Repository Instructions
 
 ## Scope
 
 These instructions apply to the entire repository.
 
-Dock-Weaver is a free and open-source, self-hosted Docker Swarm management platform for small and medium-sized teams. The product must remain usable without a hosted account, node-count license, or paid feature gate for core cluster-management capabilities.
+Nectar is a free and open-source, self-hosted Docker Swarm management platform for small and medium-sized teams. The product must remain usable without a hosted account, node-count license, or paid feature gate for core cluster-management capabilities.
 
 ## Required Technology Stack
 
@@ -35,7 +35,7 @@ Dock-Weaver is a free and open-source, self-hosted Docker Swarm management platf
 ### Packaging and Runtime
 
 - Build Go and React in a reproducible multi-stage Docker build.
-- Run Dock-Weaver as a Docker Swarm service constrained to a Manager node carrying the Dock-Weaver control label.
+- Run Nectar as a Docker Swarm service constrained to a Manager node carrying the Nectar control label.
 - Use Traefik's Swarm provider for application routing and automatic HTTPS.
 - Keep runtime images minimal and run as a non-root user wherever Docker API access does not require elevated privileges.
 - Pin direct dependency versions and commit lockfiles/checksums.
@@ -43,13 +43,13 @@ Dock-Weaver is a free and open-source, self-hosted Docker Swarm management platf
 ### Host Installer
 
 - Provide a root-level `install.sh` that supports the public `curl -fsSL <release-url>/install.sh | sudo bash` installation flow.
-- The same script must support non-interactive flags, including `--docker-version`, `--advertise-addr`, `--web-port`, `--dock-weaver-version`, and `--dry-run`.
+- The same script must support non-interactive flags, including `--docker-version`, `--advertise-addr`, `--web-port`, `--nectar-version`, and `--dry-run`.
 - The installer must be idempotent and safe to rerun after interruption. Detect completed steps instead of blindly repeating destructive commands.
 - Detect supported Linux distributions, package managers, architectures, existing Docker installations, existing Swarm membership, port conflicts, and ambiguous network interfaces before changing the host.
 - Never silently replace, upgrade, or downgrade an existing Docker installation. Require an explicit override when the installed version conflicts with the requested version.
 - Install Docker from official distribution-specific Docker repositories, then pin and verify the selected version.
 - Initialize Swarm only when the host is not already a member. Never force a host out of an existing Swarm.
-- Pull a pinned Dock-Weaver image, create required networks, volumes, configs, and secrets, deploy the service, and wait for its readiness endpoint.
+- Pull a pinned Nectar image, create required networks, volumes, configs, and secrets, deploy the service, and wait for its readiness endpoint.
 - On success, print the exact Web setup URL and a one-time initialization token. The token must not be persisted in ordinary logs.
 - Return a non-zero exit code on failure and print a redacted diagnostic plus a safe resume command.
 - Verify checksums or signatures for every artifact downloaded by the bootstrap script. Publish checksums alongside release assets.
@@ -60,7 +60,7 @@ Dock-Weaver is a free and open-source, self-hosted Docker Swarm management platf
 Use this layout when scaffolding the implementation unless a documented architectural decision supersedes it:
 
 ```text
-cmd/dock-weaver/              minimal Go application entry point
+cmd/nectar/              minimal Go application entry point
 internal/app/                 process wiring, lifecycle, and graceful shutdown
 internal/api/                 HTTP handlers, middleware, and transport DTOs
 internal/application/         use cases and operation orchestration
@@ -289,7 +289,7 @@ Closes #142
 - The project is licensed under `AGPL-3.0-only`.
 - New original source files should use `SPDX-License-Identifier: AGPL-3.0-only` in a comment format appropriate to the file type, except generated files or files whose format does not support comments.
 - Dependencies and copied assets must have licenses compatible with AGPL-3.0-only and must retain required attribution notices.
-- Do not add proprietary source, non-redistributable assets, telemetry that is enabled without informed consent, or code that requires a paid Dock-Weaver service for core operation.
+- Do not add proprietary source, non-redistributable assets, telemetry that is enabled without informed consent, or code that requires a paid Nectar service for core operation.
 - Keep copyright, trademark, and third-party notices accurate when distribution artifacts are produced.
 
 ## Verification

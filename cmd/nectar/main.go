@@ -9,9 +9,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/ranen/dock-weaver/internal/app"
-	"github.com/ranen/dock-weaver/internal/config"
-	"github.com/ranen/dock-weaver/internal/webassets"
+	"github.com/nectarops/nectar/internal/app"
+	"github.com/nectarops/nectar/internal/config"
+	"github.com/nectarops/nectar/internal/webassets"
 )
 
 func main() {
@@ -31,7 +31,7 @@ func main() {
 	defer stop()
 
 	if err := app.Run(ctx, cfg, logger, webassets.Dist()); err != nil {
-		logger.Error("run Dock-Weaver", "error", err)
+		logger.Error("run Nectar", "error", err)
 		os.Exit(1)
 	}
 }

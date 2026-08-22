@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/ranen/dock-weaver/internal/domain"
+	"github.com/nectarops/nectar/internal/domain"
 )
 
 type ClusterReader interface {

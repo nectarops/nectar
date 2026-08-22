@@ -9,14 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ranen/dock-weaver/internal/domain"
+	"github.com/nectarops/nectar/internal/domain"
 )
 
 func TestSetupAndSessionLifecycle(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	databasePath := filepath.Join(t.TempDir(), "dock-weaver.db")
+	databasePath := filepath.Join(t.TempDir(), "nectar.db")
 	storage, err := Open(ctx, databasePath)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
@@ -35,14 +35,31 @@ func TestSetupAndSessionLifecycle(t *testing.T) {
 		t.Fatal("SetupCompleted() = true before setup")
 	}
 
-	user, err := storage.CompleteSetup(ctx, "admin", "encoded-password")
+	user, err := storage.CompleteSetup(
+		ctx,
+		"admin",
+		"encoded-password",
+		domain.ManagementAccess{
+			Domain: "nectar.example.com", ACMEEmail: "ops@example.com",
+		},
+	)
 	if err != nil {
 		t.Fatalf("CompleteSetup() error = %v", err)
 	}
 	if user.Role != "owner" {
 		t.Fatalf("CompleteSetup() role = %q, want owner", user.Role)
 	}
-	if _, err := storage.CompleteSetup(ctx, "second", "encoded-password"); !errors.Is(err, domain.ErrAlreadyConfigured) {
+	var managementDomain string
+	if err := storage.db.QueryRowContext(
+		ctx,
+		"SELECT value FROM settings WHERE key = 'management_domain'",
+	).Scan(&managementDomain); err != nil {
+		t.Fatalf("read management domain setting: %v", err)
+	}
+	if managementDomain != "nectar.example.com" {
+		t.Fatalf("management domain = %q, want nectar.example.com", managementDomain)
+	}
+	if _, err := storage.CompleteSetup(ctx, "second", "encoded-password", domain.ManagementAccess{}); !errors.Is(err, domain.ErrAlreadyConfigured) {
 		t.Fatalf("second CompleteSetup() error = %v, want ErrAlreadyConfigured", err)
 	}
 
@@ -69,7 +86,7 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	databasePath := filepath.Join(t.TempDir(), "dock-weaver.db")
+	databasePath := filepath.Join(t.TempDir(), "nectar.db")
 	first, err := Open(ctx, databasePath)
 	if err != nil {
 		t.Fatalf("first Open() error = %v", err)

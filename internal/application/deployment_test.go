@@ -6,7 +6,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ranen/dock-weaver/internal/domain"
+	"github.com/nectarops/nectar/internal/domain"
 )
 
 type recordingDeploymentEngine struct {

@@ -11,12 +11,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ranen/dock-weaver/internal/version"
+	"github.com/nectarops/nectar/internal/version"
 )
 
 const (
 	defaultAddress         = ":8080"
-	defaultDataDir         = "/var/lib/dock-weaver"
+	defaultDataDir         = "/var/lib/nectar"
 	defaultSessionDuration = 24 * time.Hour
 	defaultDockerTimeout   = 8 * time.Second
 	defaultShutdownTimeout = 15 * time.Second
@@ -38,44 +38,44 @@ type Config struct {
 }
 
 func Load() (Config, error) {
-	dataDir := valueOrDefault("DW_DATA_DIR", defaultDataDir)
+	dataDir := valueOrDefault("NECTAR_DATA_DIR", defaultDataDir)
 	initToken, err := loadInitToken()
 	if err != nil {
 		return Config{}, err
 	}
 
-	cookieSecure, err := boolValue("DW_COOKIE_SECURE", false)
+	cookieSecure, err := boolValue("NECTAR_COOKIE_SECURE", false)
 	if err != nil {
 		return Config{}, err
 	}
 
-	requireDocker, err := boolValue("DW_REQUIRE_DOCKER", false)
+	requireDocker, err := boolValue("NECTAR_REQUIRE_DOCKER", false)
 	if err != nil {
 		return Config{}, err
 	}
 
 	return Config{
-		Address:         valueOrDefault("DW_ADDR", defaultAddress),
+		Address:         valueOrDefault("NECTAR_ADDR", defaultAddress),
 		DataDir:         dataDir,
-		DatabasePath:    filepath.Join(dataDir, "dock-weaver.db"),
+		DatabasePath:    filepath.Join(dataDir, "nectar.db"),
 		InitToken:       initToken,
 		CookieSecure:    cookieSecure,
 		RequireDocker:   requireDocker,
 		SessionDuration: defaultSessionDuration,
 		DockerTimeout:   defaultDockerTimeout,
 		ShutdownTimeout: defaultShutdownTimeout,
-		SourceURL:       valueOrDefault("DW_SOURCE_URL", "https://github.com/ranen/dock-weaver"),
-		Version:         valueOrDefault("DW_VERSION", version.Version),
-		Commit:          valueOrDefault("DW_COMMIT", version.Commit),
+		SourceURL:       valueOrDefault("NECTAR_SOURCE_URL", "https://github.com/nectarops/nectar"),
+		Version:         valueOrDefault("NECTAR_VERSION", version.Version),
+		Commit:          valueOrDefault("NECTAR_COMMIT", version.Commit),
 	}, nil
 }
 
 func loadInitToken() (string, error) {
-	if token := strings.TrimSpace(os.Getenv("DW_INIT_TOKEN")); token != "" {
+	if token := strings.TrimSpace(os.Getenv("NECTAR_INIT_TOKEN")); token != "" {
 		return token, nil
 	}
 
-	path := strings.TrimSpace(os.Getenv("DW_INIT_TOKEN_FILE"))
+	path := strings.TrimSpace(os.Getenv("NECTAR_INIT_TOKEN_FILE"))
 	if path == "" {
 		return "", nil
 	}
