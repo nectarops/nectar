@@ -33,8 +33,6 @@ export function SetupPage({ version, onComplete }: SetupPageProps) {
   const [username, setUsername] = useState('admin')
   const [password, setPassword] = useState('')
   const [confirmation, setConfirmation] = useState('')
-  const [domain, setDomain] = useState('')
-  const [acmeEmail, setAcmeEmail] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -46,10 +44,6 @@ export function SetupPage({ version, onComplete }: SetupPageProps) {
       setError('The password confirmation does not match.')
       return
     }
-    if (Boolean(domain.trim()) !== Boolean(acmeEmail.trim())) {
-      setError("Management domain and Let's Encrypt email must be provided together.")
-      return
-    }
 
     setSubmitting(true)
     try {
@@ -57,8 +51,6 @@ export function SetupPage({ version, onComplete }: SetupPageProps) {
         initToken,
         username,
         password,
-        domain: domain.trim(),
-        acmeEmail: acmeEmail.trim(),
       })
       onComplete(user)
     } catch (submitError) {
@@ -77,8 +69,8 @@ export function SetupPage({ version, onComplete }: SetupPageProps) {
           </span>
           <CardTitle className="text-2xl">Secure your control plane</CardTitle>
           <CardDescription>
-            Create the owner account, then optionally publish this control plane through
-            Traefik with automatic HTTPS.
+      Create the owner account over the private IP-and-port recovery path. Configure
+      Traefik and automatic HTTPS after signing in.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -148,44 +140,10 @@ export function SetupPage({ version, onComplete }: SetupPageProps) {
                   <FieldError>Passwords do not match.</FieldError>
                 ) : null}
               </Field>
-              <Field data-invalid={Boolean(error) || undefined}>
-                <FieldLabel htmlFor="management-domain">Management domain (optional)</FieldLabel>
-                <Input
-                  id="management-domain"
-                  name="domain"
-                  inputMode="url"
-                  placeholder="nectar.example.com"
-                  value={domain}
-                  onChange={(event) => setDomain(event.target.value)}
-                />
-                <FieldDescription>
-                  Point this domain to the server first. Submitting a domain installs
-                  Traefik and publishes inbound ports 80 and 443.
-                </FieldDescription>
-              </Field>
-              <Field data-invalid={Boolean(error) || undefined}>
-                <FieldLabel htmlFor="acme-email">Let&apos;s Encrypt email</FieldLabel>
-                <Input
-                  id="acme-email"
-                  name="acmeEmail"
-                  type="email"
-                  autoComplete="email"
-                  placeholder="ops@example.com"
-                  value={acmeEmail}
-                  onChange={(event) => setAcmeEmail(event.target.value)}
-                />
-                <FieldDescription>
-                  Required with a management domain and used only for ACME certificate
-                  registration.
-                </FieldDescription>
-                {domain && !acmeEmail ? (
-                  <FieldError>Enter the Let&apos;s Encrypt email for this domain.</FieldError>
-                ) : null}
-              </Field>
             </FieldGroup>
             <Button type="submit" size="lg" disabled={submitting}>
               {submitting ? <LoaderCircle data-icon="inline-start" className="animate-spin" /> : null}
-              {domain.trim() ? 'Create owner and configure HTTPS' : 'Create owner account'}
+        Create owner account
             </Button>
           </form>
         </CardContent>

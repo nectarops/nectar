@@ -39,9 +39,6 @@ func TestSetupAndSessionLifecycle(t *testing.T) {
 		ctx,
 		"admin",
 		"encoded-password",
-		domain.ManagementAccess{
-			Domain: "nectar.example.com", ACMEEmail: "ops@example.com",
-		},
 	)
 	if err != nil {
 		t.Fatalf("CompleteSetup() error = %v", err)
@@ -49,17 +46,22 @@ func TestSetupAndSessionLifecycle(t *testing.T) {
 	if user.Role != "owner" {
 		t.Fatalf("CompleteSetup() role = %q, want owner", user.Role)
 	}
-	var managementDomain string
-	if err := storage.db.QueryRowContext(
-		ctx,
-		"SELECT value FROM settings WHERE key = 'management_domain'",
-	).Scan(&managementDomain); err != nil {
-		t.Fatalf("read management domain setting: %v", err)
+	access, err := storage.ManagementAccess(ctx)
+	if err != nil {
+		t.Fatalf("ManagementAccess() before configuration error = %v", err)
 	}
-	if managementDomain != "nectar.example.com" {
-		t.Fatalf("management domain = %q, want nectar.example.com", managementDomain)
+	if access != (domain.ManagementAccess{}) {
+		t.Fatalf("ManagementAccess() before configuration = %#v, want empty", access)
 	}
-	if _, err := storage.CompleteSetup(ctx, "second", "encoded-password", domain.ManagementAccess{}); !errors.Is(err, domain.ErrAlreadyConfigured) {
+	wantAccess := domain.ManagementAccess{Domain: "nectar.example.com", ACMEEmail: "ops@example.com"}
+	if err := storage.SaveManagementAccess(ctx, wantAccess); err != nil {
+		t.Fatalf("SaveManagementAccess() error = %v", err)
+	}
+	access, err = storage.ManagementAccess(ctx)
+	if err != nil || access != wantAccess {
+		t.Fatalf("ManagementAccess() = %#v, %v; want %#v", access, err, wantAccess)
+	}
+	if _, err := storage.CompleteSetup(ctx, "second", "encoded-password"); !errors.Is(err, domain.ErrAlreadyConfigured) {
 		t.Fatalf("second CompleteSetup() error = %v, want ErrAlreadyConfigured", err)
 	}
 

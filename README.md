@@ -15,13 +15,14 @@ There is no hosted account, node-count license, telemetry requirement, or paid f
 - Persistence of the verified Manager Docker Engine version as a protected cluster target in SQLite.
 - Safe merging and validation of bounded Docker `json-file` log rotation in `/etc/docker/daemon.json`.
 - Swarm initialization without forcing a host out of an existing cluster.
-- On-demand Traefik `v3.7.1` installation only when Web setup or deployment enables a domain.
+- On-demand Traefik `v3.7.1` installation after an Owner configures HTTPS access or deploys a domain.
+- One Traefik replica pinned to the Nectar Manager, with host-mode ports 80 and 443 only on that node.
 - A one-time bootstrap token and Argon2id-protected owner account.
 - SQLite persistence in WAL mode with embedded, ordered migrations.
 - HttpOnly session cookies, strict JSON decoding, same-origin mutation checks, and security headers.
 - Live Docker Engine and Swarm status through the official Moby Go client.
 - Versioned image deployment through the Docker Engine API; implicit `latest` is rejected.
-- Optional management-domain setup with Traefik routing and Let's Encrypt HTTP-01 HTTPS.
+- Post-login management-domain setup with Traefik routing and Let's Encrypt HTTP-01 HTTPS.
 - HTTP-to-HTTPS redirects and Let's Encrypt HTTP-01 certificates for deployed domains.
 - Start-first rolling updates with Docker-native rollback on failure.
 - A reproducible multi-stage container build and an embedded single-binary Web application.
@@ -77,7 +78,7 @@ sudo env NECTAR_DOCKER_REPOSITORY_URL=https://mirrors.cloud.tencent.com/docker-c
 
 The installer then initializes Swarm when needed, deploys Nectar on the configured Web port, and prints the exact Web URL and one-time setup token after readiness succeeds. It does not create `traefik-public`, install Traefik, or occupy ports 80 and 443. The verified Docker Engine server version is stored in SQLite as `desired_docker_version`; rerunning the installer cannot silently replace that cluster policy. Delete the root-readable resume copy at `/var/lib/nectar/bootstrap-token` after setup. Docker logging defaults apply to containers created after the daemon restart; existing containers keep their original logging configuration.
 
-On the first visit, open the printed `http://<manager-ip>:<port>` URL and create the Owner account. You can also enter a management domain and Let's Encrypt email. Before submitting those optional fields, point the domain to the host and allow inbound TCP 80 and 443. Only then does Nectar create the ingress network, install Traefik with ACME, and attach an HTTPS route to its own Swarm service. If the optional fields are empty, Traefik remains uninstalled and ports 80 and 443 remain unused by Nectar. The IP-and-port URL remains available as a recovery path; sign in again when opening the domain because browser cookies are scoped to each host.
+On the first visit, open the printed `http://<manager-ip>:<port>` URL and create the Owner account. After signing in, open **HTTPS access** in the sidebar, enter the management domain and Let's Encrypt email, and submit the form. Point the domain to this Manager and allow inbound TCP 80 and 443 first. Nectar then creates the ingress network, installs or reconciles one Traefik replica on the same labeled Manager as Nectar, publishes 80 and 443 in host mode only on that node, and attaches an HTTPS route to its own Swarm service. Until this form is submitted, Traefik remains uninstalled and those ports remain unused by Nectar. The IP-and-port URL remains available as a recovery path; sign in again when opening the domain because browser cookies are scoped to each host.
 
 To test an unpublished image, build and push it under a pinned tag, then set `NECTAR_IMAGE`:
 
@@ -112,7 +113,7 @@ Before deploying, ensure that:
 - The image is reachable from every node that might run the service.
 - The application listens on the container port entered in the form.
 
-Management-domain setup creates Traefik and the `traefik-public` network on demand. If setup skipped the optional domain, the first application deployment creates them instead. Later submissions with the same service name perform a rolling service update.
+The **HTTPS access** page creates Traefik and the `traefik-public` network on demand. An application deployment can also create them when needed. Later submissions with the same service name perform a rolling service update.
 
 ## Local development
 

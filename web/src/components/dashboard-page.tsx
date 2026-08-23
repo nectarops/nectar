@@ -7,6 +7,7 @@ import {
   CircleGauge,
   Cpu,
   Database,
+  Globe,
   HardDrive,
   LayoutDashboard,
   LoaderCircle,
@@ -19,8 +20,9 @@ import {
   ShieldAlert,
 } from 'lucide-react'
 
-import { PageFrame } from '@/components/page-frame'
 import { DeployForm } from '@/components/deploy-form'
+import { ManagementAccessPage } from '@/components/management-access-page'
+import { PageFrame } from '@/components/page-frame'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -46,7 +48,7 @@ type DashboardPageProps = {
   onLoggedOut: () => void
 }
 
-type DashboardView = 'overview' | 'deploy'
+type DashboardView = 'overview' | 'deploy' | 'access'
 
 export function DashboardPage({ user, version, onLoggedOut }: DashboardPageProps) {
   const [activeView, setActiveView] = useState<DashboardView>('overview')
@@ -98,12 +100,14 @@ export function DashboardPage({ user, version, onLoggedOut }: DashboardPageProps
               error={error}
               onRefresh={() => setRefreshKey((key) => key + 1)}
             />
-          ) : (
+          ) : activeView === 'deploy' ? (
             <DeploymentPage
               cluster={cluster}
               error={error}
               onRefresh={() => setRefreshKey((key) => key + 1)}
             />
+          ) : (
+            <ManagementAccessPage />
           )}
         </div>
       </div>
@@ -121,13 +125,14 @@ function DashboardNavigation({
   const items: Array<{ id: DashboardView; label: string; icon: typeof LayoutDashboard }> = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'deploy', label: 'Deploy service', icon: Rocket },
+    { id: 'access', label: 'HTTPS access', icon: Globe },
   ]
 
   return (
     <aside className="lg:sticky lg:top-6 lg:self-start">
       <nav
         aria-label="Control plane"
-        className="grid grid-cols-2 gap-2 rounded-xl border bg-card p-2 shadow-sm lg:grid-cols-1"
+        className="grid grid-cols-3 gap-2 rounded-xl border bg-card p-2 shadow-sm lg:grid-cols-1"
       >
         {items.map(({ id, label, icon: Icon }) => (
           <Button

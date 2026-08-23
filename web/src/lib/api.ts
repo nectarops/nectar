@@ -53,6 +53,11 @@ export type DeploymentResult = {
   warnings: string[]
 }
 
+export type ManagementAccess = {
+  domain: string
+  acmeEmail: string
+}
+
 export class ApiError extends Error {
   readonly status: number
   readonly code?: string
@@ -124,8 +129,6 @@ export async function completeSetup(input: {
   initToken: string
   username: string
   password: string
-  domain: string
-  acmeEmail: string
 }) {
   return parseUser(await request('/api/v1/setup/complete', {
     method: 'POST',
@@ -169,6 +172,24 @@ export async function getCluster(signal?: AbortSignal): Promise<ClusterSnapshot>
     containersRunning: requireNumber(value.containersRunning, 'containersRunning'),
     images: requireNumber(value.images, 'images'),
   }
+}
+
+export async function getManagementAccess(signal?: AbortSignal): Promise<ManagementAccess> {
+  return parseManagementAccess(await request('/api/v1/management-access', {}, signal))
+}
+
+export async function configureManagementAccess(
+  input: ManagementAccess,
+): Promise<ManagementAccess> {
+  return parseManagementAccess(await request('/api/v1/management-access', {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  }))
+}
+
+function parseManagementAccess(input: unknown): ManagementAccess {
+  const value = requireRecord(input)
+  return { domain: requireString(value.domain, 'domain'), acmeEmail: requireString(value.acmeEmail, 'acmeEmail') }
 }
 
 export async function deployService(input: DeploymentInput): Promise<DeploymentResult> {

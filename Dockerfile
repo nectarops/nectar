@@ -1,23 +1,30 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:24.13.0-alpine3.23 AS web-build
+FROM --platform=$BUILDPLATFORM node:24.13.0-alpine3.23 AS web-build
 WORKDIR /src/web
 RUN corepack enable && corepack prepare pnpm@11.0.9 --activate
 COPY web/package.json web/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm config set store-dir /pnpm/store && \
+    pnpm install --frozen-lockfile
 COPY web/ ./
 RUN npm run build
 
-FROM golang:1.26.5-alpine3.23 AS go-build
+FROM --platform=$BUILDPLATFORM golang:1.26.5-alpine3.23 AS go-build
+ARG TARGETOS
+ARG TARGETARCH
 ARG VERSION=dev
 ARG COMMIT=unknown
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,id=go-mod,target=/go/pkg/mod \
+    go mod download
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 COPY --from=web-build /src/web/dist/ ./internal/webassets/dist/
-RUN CGO_ENABLED=0 go build \
+RUN --mount=type=cache,id=go-mod,target=/go/pkg/mod \
+    --mount=type=cache,id=go-build,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -trimpath \
     -ldflags="-s -w -X github.com/nectarops/nectar/internal/version.Version=${VERSION} -X github.com/nectarops/nectar/internal/version.Commit=${COMMIT}" \
     -o /out/nectar ./cmd/nectar
