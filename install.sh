@@ -252,9 +252,9 @@ ensure_json_tool() {
 }
 
 protect_manager_quorum() {
-  [[ "${dry_run}" != true && -n "${installed_docker}" ]] || return
-  [[ "$(docker info --format '{{.Swarm.LocalNodeState}}')" == "active" ]] || return
-  [[ "$(docker info --format '{{.Swarm.ControlAvailable}}')" == "true" ]] || return
+  [[ "${dry_run}" != true && -n "${installed_docker}" ]] || return 0
+  [[ "$(docker info --format '{{.Swarm.LocalNodeState}}')" == "active" ]] || return 0
+  [[ "$(docker info --format '{{.Swarm.ControlAvailable}}')" == "true" ]] || return 0
 
   local managers
   local quorum
