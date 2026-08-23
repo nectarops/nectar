@@ -28,6 +28,10 @@ test('submits the optional management domain with the owner setup', async () => 
 
   render(<SetupPage version={version} onComplete={onComplete} />)
 
+  expect(
+    screen.getByText(/Submitting a domain installs Traefik/),
+  ).toBeInTheDocument()
+
   await interaction.type(screen.getByLabelText('One-time setup token'), 'setup-token')
   await interaction.type(screen.getByLabelText('Password'), 'abcde')
   await interaction.type(screen.getByLabelText('Confirm password'), 'abcde')
