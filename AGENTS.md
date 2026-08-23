@@ -47,9 +47,14 @@ Nectar is a free and open-source, self-hosted Docker Swarm management platform f
 - The installer must be idempotent and safe to rerun after interruption. Detect completed steps instead of blindly repeating destructive commands.
 - Detect supported Linux distributions, package managers, architectures, existing Docker installations, existing Swarm membership, port conflicts, and ambiguous network interfaces before changing the host.
 - Never silently replace, upgrade, or downgrade an existing Docker installation. Require an explicit override when the installed version conflicts with the requested version.
-- Install Docker from official distribution-specific Docker repositories, then pin and verify the selected version.
+- Install Docker from Docker's distribution-specific repository or an explicitly configured HTTPS mirror.
+  Verify Docker's official signing-key fingerprint, then pin and verify the selected version.
 - Initialize Swarm only when the host is not already a member. Never force a host out of an existing Swarm.
-- Pull a pinned Nectar image, create required networks, volumes, configs, and secrets, deploy the service, and wait for its readiness endpoint.
+- Pull a pinned Nectar image, create its required volume, configs, and secrets, deploy the service on the
+  configured Web port, and wait for its readiness endpoint.
+- Do not create the Traefik network or service or publish ports 80 and 443 in the host installer. Create
+  ingress on demand only after Web setup receives a management domain and ACME email or an application
+  deployment requires it.
 - On success, print the exact Web setup URL and a one-time initialization token. The token must not be persisted in ordinary logs.
 - Return a non-zero exit code on failure and print a redacted diagnostic plus a safe resume command.
 - Verify checksums or signatures for every artifact downloaded by the bootstrap script. Publish checksums alongside release assets.

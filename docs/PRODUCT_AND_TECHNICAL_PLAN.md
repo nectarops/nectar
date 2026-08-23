@@ -62,11 +62,14 @@ The installer performs these steps:
 4. Merge and validate bounded `json-file` log rotation in `/etc/docker/daemon.json`, then restart Docker only if that file changed.
 5. Enable Docker at boot and verify that the daemon is available.
 6. Initialize Swarm with a stable advertise address when the host is not already a member.
-7. Create the `traefik-public` network, persistent ACME volume, and pinned baseline Traefik service on ports 80 and 443.
-8. Create required data directories, Docker secrets, and control-node labels.
-9. Start Nectar as a pinned Swarm service constrained to a labeled Manager.
-10. Wait for the Nectar readiness check.
-11. Print the exact Web setup URL, one-time initialization token, and required follow-up actions.
+7. Create required data directories, Docker secrets, and control-node labels.
+8. Start Nectar as a pinned Swarm service constrained to a labeled Manager and publish only its Web port.
+9. Wait for the Nectar readiness check.
+10. Print the exact Web setup URL, one-time initialization token, and required follow-up actions.
+
+The installer does not create the ingress network, install Traefik, or publish ports 80 and 443.
+Those changes happen only when Web setup receives both a management domain and ACME email, or when
+the operator later deploys an application requiring ingress.
 
 If Docker is already installed, the installer must never replace it silently. It must show the current and requested versions and require explicit authorization before an upgrade or downgrade.
 

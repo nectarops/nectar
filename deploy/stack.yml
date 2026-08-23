@@ -21,8 +21,6 @@ services:
     volumes:
       - nectar_data:/var/lib/nectar
       - /var/run/docker.sock:/var/run/docker.sock
-    networks:
-      - traefik-public
     secrets:
       - nectar_init_token
     deploy:
@@ -41,10 +39,6 @@ services:
         parallelism: 1
         order: stop-first
         failure_action: rollback
-
-networks:
-  traefik-public:
-    external: true
 
 volumes:
   nectar_data:

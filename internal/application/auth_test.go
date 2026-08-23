@@ -50,12 +50,14 @@ func (s *setupStore) DeleteSession(context.Context, []byte) error {
 type recordingAccessConfigurator struct {
 	access domain.ManagementAccess
 	err    error
+	calls  int
 }
 
 func (c *recordingAccessConfigurator) ConfigureManagementAccess(
 	_ context.Context,
 	access domain.ManagementAccess,
 ) error {
+	c.calls++
 	c.access = access
 	return c.err
 }
@@ -90,8 +92,36 @@ func TestSetupConfiguresNormalizedManagementAccess(t *testing.T) {
 	if configurator.access != want {
 		t.Fatalf("configured access = %#v, want %#v", configurator.access, want)
 	}
+	if configurator.calls != 1 {
+		t.Fatalf("ConfigureManagementAccess() calls = %d, want 1", configurator.calls)
+	}
 	if storage.access != want {
 		t.Fatalf("stored access = %#v, want %#v", storage.access, want)
+	}
+}
+
+func TestSetupWithoutManagementAccessSkipsIngressConfiguration(t *testing.T) {
+	t.Parallel()
+
+	storage := &setupStore{}
+	configurator := &recordingAccessConfigurator{}
+	service, err := NewAuthService(storage, configurator, "setup-token", time.Hour)
+	if err != nil {
+		t.Fatalf("NewAuthService() error = %v", err)
+	}
+
+	if _, err := service.Setup(t.Context(), SetupInput{
+		InitToken: "setup-token",
+		Username:  "admin",
+		Password:  "abcde",
+	}); err != nil {
+		t.Fatalf("Setup() error = %v", err)
+	}
+	if configurator.calls != 0 {
+		t.Fatalf("ConfigureManagementAccess() calls = %d, want 0", configurator.calls)
+	}
+	if !storage.completed {
+		t.Fatal("Setup() did not persist the owner")
 	}
 }
 

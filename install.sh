@@ -6,6 +6,7 @@ IFS=$'\n\t'
 
 readonly PROGRAM="nectar-installer"
 readonly DOCKER_KEY_FINGERPRINT="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
+readonly DEFAULT_DOCKER_REPOSITORY_URL="https://download.docker.com/linux"
 readonly DEFAULT_NECTAR_VERSION="0.1.0"
 readonly DEFAULT_WEB_PORT="8080"
 readonly INSTALL_DIR="/opt/nectar"
@@ -13,10 +14,6 @@ readonly DATA_DIR="/var/lib/nectar"
 readonly STACK_NAME="nectar"
 readonly SECRET_NAME="nectar_init_token"
 readonly DAEMON_CONFIG="/etc/docker/daemon.json"
-readonly TRAEFIK_SERVICE_NAME="nectar-traefik"
-readonly TRAEFIK_NETWORK_NAME="traefik-public"
-readonly TRAEFIK_VOLUME_NAME="nectar-traefik-acme"
-readonly DEFAULT_TRAEFIK_IMAGE="traefik:v3.7.1"
 
 docker_version=""
 advertise_addr=""
@@ -43,7 +40,7 @@ Options:
 
 Environment:
   NECTAR_IMAGE                  Override the complete pinned container image reference.
-  NECTAR_TRAEFIK_IMAGE          Override the pinned Traefik image reference.
+  NECTAR_DOCKER_REPOSITORY_URL  Override the Docker CE repository root.
 EOF
 }
 
@@ -153,16 +150,18 @@ image=${NECTAR_IMAGE:-"ghcr.io/nectarops/nectar:${nectar_version#v}"}
 [[ "${image}" != *":latest" ]] || die "the Nectar image must not use the latest tag"
 [[ "${image}" =~ ^[A-Za-z0-9._:/@-]+$ ]] || die "container image reference contains unsupported characters"
 
-traefik_image=${NECTAR_TRAEFIK_IMAGE:-"${DEFAULT_TRAEFIK_IMAGE}"}
-[[ "${traefik_image}" != *":latest" ]] || die "the Traefik image must not use the latest tag"
-[[ "${traefik_image}" =~ ^[A-Za-z0-9._:/@-]+$ ]] || die "Traefik image reference contains unsupported characters"
+docker_repository_url=${NECTAR_DOCKER_REPOSITORY_URL:-"${DEFAULT_DOCKER_REPOSITORY_URL}"}
+docker_repository_url=${docker_repository_url%/}
+[[ "${docker_repository_url}" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._/-]+)*$ ]] ||
+  die "Docker repository URL must be an HTTPS URL without query parameters"
+
 log "Host: ${distribution} ${VERSION_ID:-unknown} (${architecture})"
 log "Manager address: ${advertise_addr}; Web port: ${web_port}"
 log "Nectar image: ${image}"
+log "Docker repository: ${docker_repository_url}"
 
 installed_docker=""
 actual_docker=""
-log "Traefik image: ${traefik_image}"
 if command -v docker >/dev/null 2>&1; then
   installed_docker=$(docker version --format '{{.Server.Version}}' 2>/dev/null || true)
   if [[ -z "${installed_docker}" ]]; then
@@ -199,7 +198,11 @@ install_docker() {
   if [[ "${dry_run}" == true ]]; then
     log "Would download and verify Docker's repository signing key fingerprint ${DOCKER_KEY_FINGERPRINT}."
   else
-    curl -fsSL "https://download.docker.com/linux/${distribution}/gpg" -o "${keyring}.tmp"
+    if ! curl --retry 5 --retry-all-errors --connect-timeout 15 -fsSL \
+      "${docker_repository_url}/${distribution}/gpg" -o "${keyring}.tmp"; then
+      rm -f "${keyring}.tmp"
+      die "unable to download Docker's signing key from ${docker_repository_url}; check outbound HTTPS or set NECTAR_DOCKER_REPOSITORY_URL to a trusted mirror"
+    fi
     fingerprint=$(gpg --show-keys --with-colons "${keyring}.tmp" | awk -F: '$1 == "fpr" {print $10; exit}')
     [[ "${fingerprint}" == "${DOCKER_KEY_FINGERPRINT}" ]] || {
       rm -f "${keyring}.tmp"
@@ -212,8 +215,8 @@ install_docker() {
   if [[ "${dry_run}" == true ]]; then
     log "Would configure Docker's signed ${distribution} repository for ${codename}."
   else
-    printf 'deb [arch=%s signed-by=%s] https://download.docker.com/linux/%s %s stable\n' \
-      "${repo_arch}" "${keyring}" "${distribution}" "${codename}" > /etc/apt/sources.list.d/docker.list
+    printf 'deb [arch=%s signed-by=%s] %s/%s %s stable\n' \
+      "${repo_arch}" "${keyring}" "${docker_repository_url}" "${distribution}" "${codename}" > /etc/apt/sources.list.d/docker.list
   fi
   run apt-get update
 
@@ -249,9 +252,9 @@ ensure_json_tool() {
 }
 
 protect_manager_quorum() {
-  [[ "${dry_run}" != true && -n "${installed_docker}" ]] || return
-  [[ "$(docker info --format '{{.Swarm.LocalNodeState}}')" == "active" ]] || return
-  [[ "$(docker info --format '{{.Swarm.ControlAvailable}}')" == "true" ]] || return
+  [[ "${dry_run}" != true && -n "${installed_docker}" ]] || return 0
+  [[ "$(docker info --format '{{.Swarm.LocalNodeState}}')" == "active" ]] || return 0
+  [[ "$(docker info --format '{{.Swarm.ControlAvailable}}')" == "true" ]] || return 0
 
   local managers
   local quorum
@@ -324,127 +327,6 @@ configure_docker_logging() {
   log "Updated ${DAEMON_CONFIG} with bounded json-file log rotation."
 }
 
-ensure_traefik() {
-  if [[ "${dry_run}" == true ]]; then
-    run docker network create --driver overlay --attachable \
-      --label io.nectar.managed=true "${TRAEFIK_NETWORK_NAME}"
-    run docker volume create --label io.nectar.managed=true "${TRAEFIK_VOLUME_NAME}"
-    run docker service create \
-      --name "${TRAEFIK_SERVICE_NAME}" \
-      --label io.nectar.managed=true \
-      --label io.nectar.acme-email= \
-      --constraint node.role==manager \
-      --network "${TRAEFIK_NETWORK_NAME}" \
-      --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock,readonly \
-      --mount type=volume,source="${TRAEFIK_VOLUME_NAME}",target=/letsencrypt \
-      --publish published=80,target=80,protocol=tcp,mode=ingress \
-      --publish published=443,target=443,protocol=tcp,mode=ingress \
-      --read-only \
-      --replicas 1 \
-      --restart-condition on-failure \
-      --restart-delay 5s \
-      "${traefik_image}" \
-      --api.dashboard=false \
-      --log.level=INFO \
-      --providers.swarm.endpoint=unix:///var/run/docker.sock \
-      --providers.swarm.exposedbydefault=false \
-      --providers.swarm.network="${TRAEFIK_NETWORK_NAME}" \
-      --entrypoints.web.address=:80 \
-      --entrypoints.web.http.redirections.entrypoint.to=websecure \
-      --entrypoints.web.http.redirections.entrypoint.scheme=https \
-      --entrypoints.websecure.address=:443
-    return
-  fi
-
-  if docker network inspect "${TRAEFIK_NETWORK_NAME}" >/dev/null 2>&1; then
-    local network_driver
-    local network_scope
-    network_driver=$(docker network inspect --format '{{.Driver}}' "${TRAEFIK_NETWORK_NAME}")
-    network_scope=$(docker network inspect --format '{{.Scope}}' "${TRAEFIK_NETWORK_NAME}")
-    [[ "${network_driver}" == "overlay" && "${network_scope}" == "swarm" ]] ||
-      die "${TRAEFIK_NETWORK_NAME} exists but is not a Swarm overlay network"
-  else
-    docker network create --driver overlay --attachable \
-      --label io.nectar.managed=true "${TRAEFIK_NETWORK_NAME}" >/dev/null
-  fi
-
-  if docker volume inspect "${TRAEFIK_VOLUME_NAME}" >/dev/null 2>&1; then
-    local volume_managed
-    volume_managed=$(docker volume inspect --format '{{index .Labels "io.nectar.managed"}}' "${TRAEFIK_VOLUME_NAME}")
-    [[ "${volume_managed}" == "true" ]] ||
-      die "${TRAEFIK_VOLUME_NAME} exists but is not managed by Nectar"
-  else
-    docker volume create --label io.nectar.managed=true "${TRAEFIK_VOLUME_NAME}" >/dev/null
-  fi
-
-  if docker service inspect "${TRAEFIK_SERVICE_NAME}" >/dev/null 2>&1; then
-    local service_managed
-    service_managed=$(docker service inspect --format '{{index .Spec.Labels "io.nectar.managed"}}' "${TRAEFIK_SERVICE_NAME}")
-    [[ "${service_managed}" == "true" ]] ||
-      die "${TRAEFIK_SERVICE_NAME} exists but is not managed by Nectar"
-    log "Traefik is already installed; preserving the managed service."
-    return
-  fi
-
-  local port
-  if command -v ss >/dev/null 2>&1; then
-    for port in 80 443; do
-      if ss -H -ltn "sport = :${port}" 2>/dev/null | grep -q .; then
-        die "TCP port ${port} is already listening; Traefik requires ports 80 and 443"
-      fi
-    done
-  fi
-
-  docker service create \
-    --name "${TRAEFIK_SERVICE_NAME}" \
-    --label io.nectar.managed=true \
-    --label io.nectar.acme-email= \
-    --constraint node.role==manager \
-    --network "${TRAEFIK_NETWORK_NAME}" \
-    --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock,readonly \
-    --mount type=volume,source="${TRAEFIK_VOLUME_NAME}",target=/letsencrypt \
-    --publish published=80,target=80,protocol=tcp,mode=ingress \
-    --publish published=443,target=443,protocol=tcp,mode=ingress \
-    --read-only \
-    --replicas 1 \
-    --restart-condition on-failure \
-    --restart-delay 5s \
-    "${traefik_image}" \
-    --api.dashboard=false \
-    --log.level=INFO \
-    --providers.swarm.endpoint=unix:///var/run/docker.sock \
-    --providers.swarm.exposedbydefault=false \
-    --providers.swarm.network="${TRAEFIK_NETWORK_NAME}" \
-    --entrypoints.web.address=:80 \
-    --entrypoints.web.http.redirections.entrypoint.to=websecure \
-    --entrypoints.web.http.redirections.entrypoint.scheme=https \
-    --entrypoints.websecure.address=:443 >/dev/null
-  log "Installed the baseline Traefik Swarm service on ports 80 and 443."
-}
-
-wait_for_traefik() {
-  [[ "${dry_run}" != true ]] || return
-
-  local current
-  local desired
-  local replicas
-  log "Waiting for Traefik to reach its desired replica count …"
-  for _ in $(seq 1 60); do
-    replicas=$(docker service ls --filter "name=${TRAEFIK_SERVICE_NAME}" \
-      --format '{{.Name}} {{.Replicas}}' |
-      awk -v name="${TRAEFIK_SERVICE_NAME}" '$1 == name {print $2; exit}')
-    replicas=${replicas:-0/0}
-    current=${replicas%/*}
-    desired=${replicas#*/}
-    if [[ "${current}" =~ ^[0-9]+$ && "${desired}" =~ ^[0-9]+$ ]] &&
-      ((desired > 0 && current == desired)); then
-      return
-    fi
-    sleep 2
-  done
-  die "Traefik did not become ready; inspect: docker service ps ${TRAEFIK_SERVICE_NAME}"
-}
-
 if [[ -z "${installed_docker}" || ( -n "${docker_version}" && "${installed_docker}" != "${docker_version}" ) ]]; then
   install_docker
 fi
@@ -465,6 +347,8 @@ if [[ "${dry_run}" != true ]]; then
 else
   log "Would record the verified Docker Engine version as the cluster-wide target after Docker starts."
 fi
+
+run docker image pull "${image}"
 
 swarm_state="inactive"
 if [[ "${dry_run}" != true ]]; then
@@ -493,9 +377,6 @@ if [[ "${dry_run}" != true ]]; then
 else
   log "Would label the current Manager node nectar.control=true."
 fi
-
-ensure_traefik
-wait_for_traefik
 
 service_exists=false
 if [[ "${dry_run}" != true ]] && docker service inspect "${STACK_NAME}_nectar" >/dev/null 2>&1; then
@@ -559,8 +440,6 @@ services:
     volumes:
       - nectar_data:/var/lib/nectar
       - /var/run/docker.sock:/var/run/docker.sock
-    networks:
-      - ${TRAEFIK_NETWORK_NAME}
     secrets:
       - ${SECRET_NAME}
     deploy:
@@ -579,9 +458,6 @@ services:
         parallelism: 1
         order: stop-first
         failure_action: rollback
-networks:
-  ${TRAEFIK_NETWORK_NAME}:
-    external: true
 volumes:
   nectar_data:
 secrets:

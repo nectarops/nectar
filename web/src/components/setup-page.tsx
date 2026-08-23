@@ -159,8 +159,8 @@ export function SetupPage({ version, onComplete }: SetupPageProps) {
                   onChange={(event) => setDomain(event.target.value)}
                 />
                 <FieldDescription>
-                  Point this domain to the server first. Traefik requires inbound ports 80
-                  and 443.
+                  Point this domain to the server first. Submitting a domain installs
+                  Traefik and publishes inbound ports 80 and 443.
                 </FieldDescription>
               </Field>
               <Field data-invalid={Boolean(error) || undefined}>
