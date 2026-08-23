@@ -451,7 +451,7 @@ services:
           - node.role == manager
           - node.labels.nectar.control == true
       restart_policy:
-        condition: on-failure
+        condition: any
         delay: 5s
         max_attempts: 5
       update_config:
