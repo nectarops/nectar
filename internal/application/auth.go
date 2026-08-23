@@ -19,29 +19,23 @@ var usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{2,31}$`)
 
 type AuthStore interface {
 	SetupCompleted(context.Context) (bool, error)
-	CompleteSetup(context.Context, string, string, domain.ManagementAccess) (domain.User, error)
+	CompleteSetup(context.Context, string, string) (domain.User, error)
 	UserByUsername(context.Context, string) (domain.StoredUser, error)
 	CreateSession(context.Context, int64, []byte, time.Time) error
 	UserBySession(context.Context, []byte) (domain.User, error)
 	DeleteSession(context.Context, []byte) error
 }
 
-type ManagementAccessConfigurator interface {
-	ConfigureManagementAccess(context.Context, domain.ManagementAccess) error
-}
-
 type AuthService struct {
-	store              AuthStore
-	accessConfigurator ManagementAccessConfigurator
-	initToken          string
-	sessionDuration    time.Duration
+	store           AuthStore
+	initToken       string
+	sessionDuration time.Duration
 }
 
 type SetupInput struct {
-	InitToken        string
-	Username         string
-	Password         string
-	ManagementAccess domain.ManagementAccess
+	InitToken string
+	Username  string
+	Password  string
 }
 
 type AuthResult struct {
@@ -51,7 +45,6 @@ type AuthResult struct {
 
 func NewAuthService(
 	store AuthStore,
-	accessConfigurator ManagementAccessConfigurator,
 	initToken string,
 	sessionDuration time.Duration,
 ) (*AuthService, error) {
@@ -63,10 +56,9 @@ func NewAuthService(
 	}
 
 	return &AuthService{
-		store:              store,
-		accessConfigurator: accessConfigurator,
-		initToken:          initToken,
-		sessionDuration:    sessionDuration,
+		store:           store,
+		initToken:       initToken,
+		sessionDuration: sessionDuration,
 	}, nil
 }
 
@@ -96,25 +88,12 @@ func (s *AuthService) Setup(ctx context.Context, input SetupInput) (AuthResult, 
 		)
 	}
 
-	access, err := normalizeManagementAccess(input.ManagementAccess)
-	if err != nil {
-		return AuthResult{}, err
-	}
 	passwordHash, err := security.HashPassword(input.Password)
 	if err != nil {
 		return AuthResult{}, err
 	}
 
-	if access.Domain != "" {
-		if s.accessConfigurator == nil {
-			return AuthResult{}, errors.New("management access configuration is unavailable")
-		}
-		if err := s.accessConfigurator.ConfigureManagementAccess(ctx, access); err != nil {
-			return AuthResult{}, fmt.Errorf("configure management access: %w", err)
-		}
-	}
-
-	user, err := s.store.CompleteSetup(ctx, username, passwordHash, access)
+	user, err := s.store.CompleteSetup(ctx, username, passwordHash)
 	if err != nil {
 		return AuthResult{}, err
 	}

@@ -106,6 +106,21 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 	})
 }
 
+func (s *Server) requireOwner(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, ok := userFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "unauthenticated", "authentication required")
+			return
+		}
+		if user.Role != "owner" {
+			writeError(w, http.StatusForbidden, "forbidden", "owner access is required")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func requestHost(r *http.Request) string {
 	forwarded := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Host"), ",")[0])
 	if forwarded != "" {

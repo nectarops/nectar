@@ -192,10 +192,7 @@ func (i *Inspector) ensureTraefik(ctx context.Context, networkID, acmeEmail stri
 			return errors.New("nectar-traefik exists but is not managed by Nectar")
 		}
 		configuredEmail := inspected.Service.Spec.Labels["io.nectar.acme-email"]
-		if configuredEmail == acmeEmail {
-			return nil
-		}
-		if configuredEmail != "" {
+		if configuredEmail != "" && configuredEmail != acmeEmail {
 			return fmt.Errorf(
 				"Traefik is configured for ACME email %q; use the same email",
 				configuredEmail,
@@ -205,7 +202,7 @@ func (i *Inspector) ensureTraefik(ctx context.Context, networkID, acmeEmail stri
 			Version: inspected.Service.Version,
 			Spec:    newTraefikServiceSpec(networkID, acmeEmail),
 		}); err != nil {
-			return fmt.Errorf("enable Traefik ACME configuration: %w", err)
+			return fmt.Errorf("reconcile Traefik service: %w", err)
 		}
 		return nil
 	}
@@ -271,21 +268,24 @@ func newTraefikServiceSpec(networkID, acmeEmail string) swarm.ServiceSpec {
 				ReadOnly: true,
 			},
 			RestartPolicy: &swarm.RestartPolicy{
-				Condition: swarm.RestartPolicyConditionOnFailure,
+				Condition: swarm.RestartPolicyConditionAny,
 				Delay:     &delay,
 			},
-			Placement: &swarm.Placement{Constraints: []string{"node.role == manager"}},
-			Networks:  []swarm.NetworkAttachmentConfig{{Target: networkID}},
+			Placement: &swarm.Placement{Constraints: []string{
+				"node.role == manager",
+				"node.labels.nectar.control == true",
+			}},
+			Networks: []swarm.NetworkAttachmentConfig{{Target: networkID}},
 		},
 		Mode: swarm.ServiceMode{Replicated: &swarm.ReplicatedService{Replicas: &replicas}},
 		EndpointSpec: &swarm.EndpointSpec{Ports: []swarm.PortConfig{
 			{
 				Protocol: network.TCP, TargetPort: 80,
-				PublishedPort: 80, PublishMode: swarm.PortConfigPublishModeIngress,
+				PublishedPort: 80, PublishMode: swarm.PortConfigPublishModeHost,
 			},
 			{
 				Protocol: network.TCP, TargetPort: 443,
-				PublishedPort: 443, PublishMode: swarm.PortConfigPublishModeIngress,
+				PublishedPort: 443, PublishMode: swarm.PortConfigPublishModeHost,
 			},
 		}},
 	}

@@ -2,7 +2,12 @@
 
 package docker
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+
+	"github.com/moby/moby/api/types/swarm"
+)
 
 func TestNewTraefikServiceSpecConfiguresPinnedHTTPSIngress(t *testing.T) {
 	t.Parallel()
@@ -46,6 +51,21 @@ func TestNewTraefikServiceSpecConfiguresPinnedHTTPSIngress(t *testing.T) {
 		}
 	}
 
+	if spec.Mode.Replicated == nil || spec.Mode.Replicated.Replicas == nil || *spec.Mode.Replicated.Replicas != 1 {
+		t.Fatalf("Traefik replicas = %#v, want 1", spec.Mode.Replicated)
+	}
+	if spec.TaskTemplate.RestartPolicy == nil || spec.TaskTemplate.RestartPolicy.Condition != swarm.RestartPolicyConditionAny {
+		t.Fatalf("Traefik restart policy = %#v, want any", spec.TaskTemplate.RestartPolicy)
+	}
+	wantConstraints := []string{
+		"node.role == manager",
+		"node.labels.nectar.control == true",
+	}
+	if spec.TaskTemplate.Placement == nil ||
+		!reflect.DeepEqual(spec.TaskTemplate.Placement.Constraints, wantConstraints) {
+		t.Fatalf("Traefik constraints = %#v, want %#v", spec.TaskTemplate.Placement, wantConstraints)
+	}
+
 	if len(spec.TaskTemplate.Networks) != 1 || spec.TaskTemplate.Networks[0].Target != "network-id" {
 		t.Fatalf("Traefik networks = %#v", spec.TaskTemplate.Networks)
 	}
@@ -54,5 +74,10 @@ func TestNewTraefikServiceSpecConfiguresPinnedHTTPSIngress(t *testing.T) {
 	}
 	if spec.EndpointSpec.Ports[0].PublishedPort != 80 || spec.EndpointSpec.Ports[1].PublishedPort != 443 {
 		t.Fatalf("published ports = %#v, want 80 and 443", spec.EndpointSpec.Ports)
+	}
+	for _, port := range spec.EndpointSpec.Ports {
+		if port.PublishMode != swarm.PortConfigPublishModeHost {
+			t.Fatalf("Traefik port %d publish mode = %s, want host", port.PublishedPort, port.PublishMode)
+		}
 	}
 }

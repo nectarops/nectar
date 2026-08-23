@@ -17,7 +17,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-test('submits the optional management domain with the owner setup', async () => {
+test('creates only the owner account during initial setup', async () => {
   const interaction = userEvent.setup()
   const onComplete = vi.fn()
   let submitted: unknown
@@ -28,49 +28,21 @@ test('submits the optional management domain with the owner setup', async () => 
 
   render(<SetupPage version={version} onComplete={onComplete} />)
 
-  expect(
-    screen.getByText(/Submitting a domain installs Traefik/),
-  ).toBeInTheDocument()
+  expect(screen.queryByLabelText('Management domain (optional)')).not.toBeInTheDocument()
 
   await interaction.type(screen.getByLabelText('One-time setup token'), 'setup-token')
   await interaction.type(screen.getByLabelText('Password'), 'abcde')
   await interaction.type(screen.getByLabelText('Confirm password'), 'abcde')
-  await interaction.type(screen.getByLabelText('Management domain (optional)'), 'nectar.example.com')
-  await interaction.type(screen.getByLabelText("Let's Encrypt email"), 'ops@example.com')
-  await interaction.click(
-    screen.getByRole('button', { name: 'Create owner and configure HTTPS' }),
-  )
+  await interaction.click(screen.getByRole('button', { name: 'Create owner account' }))
 
   await waitFor(() => expect(onComplete).toHaveBeenCalledTimes(1))
   expect(submitted).toEqual({
     initToken: 'setup-token',
     username: 'admin',
     password: 'abcde',
-    domain: 'nectar.example.com',
-    acmeEmail: 'ops@example.com',
   })
 })
 
-test('requires the domain and ACME email together', async () => {
-  const interaction = userEvent.setup()
-  const fetchMock = vi.fn()
-  vi.stubGlobal('fetch', fetchMock)
-
-  render(<SetupPage version={version} onComplete={vi.fn()} />)
-
-  await interaction.type(screen.getByLabelText('One-time setup token'), 'setup-token')
-  await interaction.type(screen.getByLabelText('Password'), 'abcde')
-  await interaction.type(screen.getByLabelText('Confirm password'), 'abcde')
-  await interaction.type(screen.getByLabelText('Management domain (optional)'), 'nectar.example.com')
-  await interaction.click(
-    screen.getByRole('button', { name: 'Create owner and configure HTTPS' }),
-  )
-
-  expect(
-    screen.getByText("Management domain and Let's Encrypt email must be provided together."),
-  ).toBeInTheDocument()
-  expect(fetchMock).not.toHaveBeenCalled()
-})
 
 function jsonResponse(value: unknown) {
   return new Response(JSON.stringify(value), {

@@ -22,33 +22,35 @@ type Readiness interface {
 }
 
 type Options struct {
-	Logger        *slog.Logger
-	Auth          *application.AuthService
-	Cluster       *application.ClusterService
-	Deployments   *application.DeploymentService
-	Store         Readiness
-	Docker        Readiness
-	RequireDocker bool
-	Assets        fs.FS
-	CookieSecure  bool
-	SourceURL     string
-	Version       string
-	Commit        string
+	Logger           *slog.Logger
+	Auth             *application.AuthService
+	Cluster          *application.ClusterService
+	ManagementAccess *application.ManagementAccessService
+	Deployments      *application.DeploymentService
+	Store            Readiness
+	Docker           Readiness
+	RequireDocker    bool
+	Assets           fs.FS
+	CookieSecure     bool
+	SourceURL        string
+	Version          string
+	Commit           string
 }
 
 type Server struct {
-	logger        *slog.Logger
-	auth          *application.AuthService
-	cluster       *application.ClusterService
-	deployments   *application.DeploymentService
-	store         Readiness
-	docker        Readiness
-	requireDocker bool
-	assets        fs.FS
-	cookieSecure  bool
-	sourceURL     string
-	version       string
-	commit        string
+	logger           *slog.Logger
+	auth             *application.AuthService
+	cluster          *application.ClusterService
+	managementAccess *application.ManagementAccessService
+	deployments      *application.DeploymentService
+	store            Readiness
+	docker           Readiness
+	requireDocker    bool
+	assets           fs.FS
+	cookieSecure     bool
+	sourceURL        string
+	version          string
+	commit           string
 }
 
 func NewServer(options Options) (*Server, error) {
@@ -57,6 +59,9 @@ func NewServer(options Options) (*Server, error) {
 	}
 	if options.Cluster == nil {
 		return nil, errors.New("cluster service is required")
+	}
+	if options.ManagementAccess == nil {
+		return nil, errors.New("management access service is required")
 	}
 	if options.Deployments == nil {
 		return nil, errors.New("deployment service is required")
@@ -69,18 +74,19 @@ func NewServer(options Options) (*Server, error) {
 	}
 
 	return &Server{
-		logger:        loggerOrDefault(options.Logger),
-		auth:          options.Auth,
-		cluster:       options.Cluster,
-		deployments:   options.Deployments,
-		store:         options.Store,
-		docker:        options.Docker,
-		requireDocker: options.RequireDocker,
-		assets:        options.Assets,
-		cookieSecure:  options.CookieSecure,
-		sourceURL:     options.SourceURL,
-		version:       options.Version,
-		commit:        options.Commit,
+		logger:           loggerOrDefault(options.Logger),
+		auth:             options.Auth,
+		cluster:          options.Cluster,
+		managementAccess: options.ManagementAccess,
+		deployments:      options.Deployments,
+		store:            options.Store,
+		docker:           options.Docker,
+		requireDocker:    options.RequireDocker,
+		assets:           options.Assets,
+		cookieSecure:     options.CookieSecure,
+		sourceURL:        options.SourceURL,
+		version:          options.Version,
+		commit:           options.Commit,
 	}, nil
 }
 
@@ -95,6 +101,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/logout", s.handleLogout)
 	mux.Handle("GET /api/v1/auth/session", s.requireAuth(http.HandlerFunc(s.handleSession)))
 	mux.Handle("GET /api/v1/cluster", s.requireAuth(http.HandlerFunc(s.handleCluster)))
+	mux.Handle("GET /api/v1/management-access", s.requireAuth(s.requireOwner(http.HandlerFunc(s.handleManagementAccess))))
+	mux.Handle("PUT /api/v1/management-access", s.requireAuth(s.requireOwner(http.HandlerFunc(s.handleManagementAccessUpdate))))
 	mux.Handle("POST /api/v1/deployments", s.requireAuth(http.HandlerFunc(s.handleDeployment)))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "API route not found")
@@ -155,8 +163,6 @@ type setupRequest struct {
 	InitToken string `json:"initToken"`
 	Username  string `json:"username"`
 	Password  string `json:"password"`
-	Domain    string `json:"domain"`
-	ACMEEmail string `json:"acmeEmail"`
 }
 
 func (s *Server) handleSetupComplete(w http.ResponseWriter, r *http.Request) {
@@ -170,10 +176,6 @@ func (s *Server) handleSetupComplete(w http.ResponseWriter, r *http.Request) {
 		InitToken: request.InitToken,
 		Username:  request.Username,
 		Password:  request.Password,
-		ManagementAccess: domain.ManagementAccess{
-			Domain:    request.Domain,
-			ACMEEmail: request.ACMEEmail,
-		},
 	})
 	if err != nil {
 		s.handleAuthError(w, err)
@@ -236,6 +238,36 @@ func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, snapshot)
+}
+
+func (s *Server) handleManagementAccess(w http.ResponseWriter, r *http.Request) {
+	access, err := s.managementAccess.Current(r.Context())
+	if err != nil {
+		s.logger.Warn("read management access", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "unable to read management access")
+		return
+	}
+	writeJSON(w, http.StatusOK, access)
+}
+
+func (s *Server) handleManagementAccessUpdate(w http.ResponseWriter, r *http.Request) {
+	var request domain.ManagementAccess
+	if err := decodeJSON(w, r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	access, err := s.managementAccess.Configure(r.Context(), request)
+	if err != nil {
+		if errors.Is(err, domain.ErrInvalidManagementAccess) {
+			writeError(w, http.StatusBadRequest, "validation_failed", err.Error())
+			return
+		}
+		s.logger.Warn("configure management access", "error", err)
+		writeError(w, http.StatusServiceUnavailable, "traefik_unavailable", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, access)
 }
 
 func (s *Server) handleDeployment(w http.ResponseWriter, r *http.Request) {

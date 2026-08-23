@@ -56,6 +56,14 @@ test('moves the deployment form behind the sidebar navigation', async () => {
     'aria-current',
     'page',
   )
+
+  await interaction.click(screen.getByRole('button', { name: 'HTTPS access' }))
+
+  expect(screen.getByRole('heading', { name: 'Configure HTTPS access' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'HTTPS access' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  )
 })
 
 test('explains why deployment is unavailable when Swarm is inactive', async () => {
@@ -100,7 +108,12 @@ test('warns when the Manager Docker version differs from the cluster target', as
 })
 
 function stubCluster(cluster: ClusterSnapshot) {
-  vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(cluster)))
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input).endsWith('/api/v1/management-access')) {
+      return jsonResponse({ domain: '', acmeEmail: '' })
+    }
+    return jsonResponse(cluster)
+  }))
 }
 
 function jsonResponse(value: unknown) {

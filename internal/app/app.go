@@ -80,9 +80,15 @@ func Run(
 
 	authService, err := application.NewAuthService(
 		database,
-		accessConfigurator,
 		cfg.InitToken,
 		cfg.SessionDuration,
+	)
+	if err != nil {
+		return err
+	}
+	managementAccessService, err := application.NewManagementAccessService(
+		database,
+		accessConfigurator,
 	)
 	if err != nil {
 		return err
@@ -98,18 +104,19 @@ func Run(
 	}
 
 	apiServer, err := api.NewServer(api.Options{
-		Logger:        logger,
-		Auth:          authService,
-		Cluster:       clusterService,
-		Deployments:   deploymentService,
-		Store:         database,
-		Docker:        dockerReadiness,
-		RequireDocker: cfg.RequireDocker,
-		Assets:        assets,
-		CookieSecure:  cfg.CookieSecure,
-		SourceURL:     cfg.SourceURL,
-		Version:       cfg.Version,
-		Commit:        cfg.Commit,
+		Logger:           logger,
+		Auth:             authService,
+		Cluster:          clusterService,
+		ManagementAccess: managementAccessService,
+		Deployments:      deploymentService,
+		Store:            database,
+		Docker:           dockerReadiness,
+		RequireDocker:    cfg.RequireDocker,
+		Assets:           assets,
+		CookieSecure:     cfg.CookieSecure,
+		SourceURL:        cfg.SourceURL,
+		Version:          cfg.Version,
+		Commit:           cfg.Commit,
 	})
 	if err != nil {
 		return err

@@ -68,8 +68,8 @@ The installer performs these steps:
 10. Print the exact Web setup URL, one-time initialization token, and required follow-up actions.
 
 The installer does not create the ingress network, install Traefik, or publish ports 80 and 443.
-Those changes happen only when Web setup receives both a management domain and ACME email, or when
-the operator later deploys an application requiring ingress.
+Those changes happen only after a signed-in Owner submits both a management domain and ACME email, or
+when the operator later deploys an application requiring ingress.
 
 If Docker is already installed, the installer must never replace it silently. It must show the current and requested versions and require explicit authorization before an upgrade or downgrade.
 
@@ -83,12 +83,12 @@ The complete first-run wizard is intended to cover:
 2. Configure site name, time zone, and log retention.
 3. Confirm Manager advertise and external access addresses.
 4. Configure registry credentials, with public registries supported without credentials.
-5. Configure Traefik domain, ACME email, challenge type, and ingress node.
+5. After login, configure the Traefik domain, ACME email, challenge type, and ingress node.
 6. Run cluster health checks and enter the overview.
 
 The initialization token must become unusable after setup and must never appear in ordinary application logs.
 
-The current alpha implements the Owner account plus optional management domain and ACME email. Initial access uses `IP:8080`; when both optional values are supplied, Nectar enables Traefik ACME and adds the HTTPS route before committing setup to SQLite. The published IP port remains available for recovery.
+The current alpha creates the Owner account first over `IP:8080`. After login, the Owner uses a dedicated **HTTPS access** page to submit the management domain and ACME email. Nectar then installs or reconciles Traefik and persists the access settings in SQLite. The published IP port remains available for recovery.
 
 ### 2.3 Adding a Server
 
@@ -271,8 +271,10 @@ Initial deployment:
 
 - Create an attachable `traefik-public` overlay network.
 - Deploy Traefik's Swarm provider with `exposedByDefault=false`.
-- Constrain Traefik to an ingress Manager because the Swarm API is available on Managers.
-- Publish ports 80 and 443; do not expose the dashboard publicly by default.
+- Run exactly one Traefik replica, constrained to `node.role == manager` and the same `nectar.control`
+  label used by the Nectar service.
+- Publish ports 80 and 443 in host mode so only the Nectar Manager listens on them; do not expose the
+  dashboard publicly by default.
 - Provide restricted persistent ACME storage.
 - Configure HTTP-to-HTTPS redirection, security headers, and optional dashboard authentication.
 
@@ -382,6 +384,8 @@ SQLite migrations must carry schema versions. Every stored JSON specification ca
 POST   /api/v1/setup/complete
 POST   /api/v1/auth/login
 POST   /api/v1/auth/logout
+GET    /api/v1/management-access
+PUT    /api/v1/management-access
 
 GET    /api/v1/cluster
 GET    /api/v1/cluster/health
@@ -563,7 +567,7 @@ The MVP is complete only when all of these conditions are satisfied:
 | Application orchestration | Swarm services/stacks | Matches the product and preserves the Compose mental model |
 | Ingress | Traefik Swarm provider | Discovers routes from service labels |
 | MVP ACME | HTTP-01 + one Traefik replica | File-backed ACME storage is not safe for concurrent writers |
-| First management access | `IP:8080`, optional domain during setup | Keeps bootstrap recoverable while enabling HTTPS immediately after DNS is ready |
+| First management access | `IP:8080`, then a post-login HTTPS access page | Keeps bootstrap recoverable and installs Traefik only after DNS is ready |
 | Deployment version | Tag as input, digest in storage | Balances usability and repeatability |
 | Long-running feedback | Durable operations + SSE | Work survives refresh while the UI receives live events |
 

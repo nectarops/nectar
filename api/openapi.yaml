@@ -57,8 +57,6 @@ paths:
                 initToken: { type: string, writeOnly: true }
                 username: { type: string, minLength: 3, maxLength: 32 }
                 password: { type: string, minLength: 5, writeOnly: true }
-                domain: { type: string, description: Optional management FQDN; requires acmeEmail. }
-                acmeEmail: { type: string, format: email, description: Required with domain. }
       responses:
         "201": { $ref: "#/components/responses/User" }
         "400": { $ref: "#/components/responses/Error" }
@@ -92,6 +90,36 @@ paths:
       responses:
         "200": { $ref: "#/components/responses/User" }
         "401": { $ref: "#/components/responses/Error" }
+  /api/v1/management-access:
+    get:
+      operationId: getManagementAccess
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: Current management domain and ACME account email.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ManagementAccess" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+    put:
+      operationId: configureManagementAccess
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ManagementAccess" }
+      responses:
+        "200":
+          description: Traefik was installed or reconciled and management access was saved.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ManagementAccess" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
   /api/v1/cluster:
     get:
       operationId: getCluster
@@ -164,6 +192,13 @@ components:
         nodeRole: { type: string }
         nodes: { type: integer }
         managers: { type: integer }
+    ManagementAccess:
+      type: object
+      additionalProperties: false
+      required: [domain, acmeEmail]
+      properties:
+        domain: { type: string, description: Management FQDN without a scheme or path. }
+        acmeEmail: { type: string, format: email, description: Let's Encrypt account email. }
     DeploymentInput:
       type: object
       additionalProperties: false

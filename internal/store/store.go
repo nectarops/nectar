@@ -212,11 +212,64 @@ func (s *Store) SetupCompleted(ctx context.Context) (bool, error) {
 	return value == "true", nil
 }
 
+func (s *Store) ManagementAccess(ctx context.Context) (domain.ManagementAccess, error) {
+	var access domain.ManagementAccess
+	settings := []struct {
+		key    string
+		target *string
+	}{
+		{key: "management_domain", target: &access.Domain},
+		{key: "acme_email", target: &access.ACMEEmail},
+	}
+	for _, setting := range settings {
+		err := s.db.QueryRowContext(
+			ctx,
+			"SELECT value FROM settings WHERE key = ?",
+			setting.key,
+		).Scan(setting.target)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return domain.ManagementAccess{}, fmt.Errorf("read %s setting: %w", setting.key, err)
+		}
+	}
+	return access, nil
+}
+
+func (s *Store) SaveManagementAccess(ctx context.Context, access domain.ManagementAccess) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin management access transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now().UTC().Unix()
+	for key, value := range map[string]string{
+		"management_domain": access.Domain,
+		"acme_email":        access.ACMEEmail,
+	} {
+		if _, err := tx.ExecContext(
+			ctx,
+			`INSERT INTO settings(key, value, updated_at) VALUES (?, ?, ?)
+			 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+			key,
+			value,
+			now,
+		); err != nil {
+			return fmt.Errorf("store %s setting: %w", key, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit management access transaction: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) CompleteSetup(
 	ctx context.Context,
 	username string,
 	passwordHash string,
-	access domain.ManagementAccess,
 ) (domain.User, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -259,25 +312,6 @@ func (s *Store) CompleteSetup(
 		now.Unix(),
 	); err != nil {
 		return domain.User{}, fmt.Errorf("mark setup complete: %w", err)
-	}
-
-	if access.Domain != "" {
-		settings := map[string]string{
-			"management_domain": access.Domain,
-			"acme_email":        access.ACMEEmail,
-		}
-		for key, value := range settings {
-			if _, err := tx.ExecContext(
-				ctx,
-				`INSERT INTO settings(key, value, updated_at) VALUES (?, ?, ?)
-				 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-				key,
-				value,
-				now.Unix(),
-			); err != nil {
-				return domain.User{}, fmt.Errorf("store %s setting: %w", key, err)
-			}
-		}
 	}
 
 	if err := tx.Commit(); err != nil {

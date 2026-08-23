@@ -53,7 +53,7 @@ Nectar is a free and open-source, self-hosted Docker Swarm management platform f
 - Pull a pinned Nectar image, create its required volume, configs, and secrets, deploy the service on the
   configured Web port, and wait for its readiness endpoint.
 - Do not create the Traefik network or service or publish ports 80 and 443 in the host installer. Create
-  ingress on demand only after Web setup receives a management domain and ACME email or an application
+  ingress on demand only after the signed-in Owner submits a management domain and ACME email or an application
   deployment requires it.
 - On success, print the exact Web setup URL and a one-time initialization token. The token must not be persisted in ordinary logs.
 - Return a non-zero exit code on failure and print a redacted diagnostic plus a safe resume command.
