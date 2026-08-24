@@ -91,7 +91,8 @@ replace its subnet.
 
 The Web port is published in Swarm `host` mode on the labeled Nectar Manager. This keeps the Manager IP and port
 as the recovery URL without depending on the cluster's routing-mesh `ingress` network, which may conflict with
-networks created before Nectar is installed.
+networks created before Nectar is installed. The checked-in `deploy/stack.yml` follows the same policy and
+expects the installer-managed external `nectar_control` network to exist.
 
 For hosts that cannot reach Docker's default repository, set a trusted HTTPS mirror with the same Docker CE repository layout. The signing key fingerprint is still verified before the mirror is configured. For example, on Tencent Cloud:
 

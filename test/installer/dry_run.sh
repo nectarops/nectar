@@ -9,6 +9,7 @@ readonly CENTOS_STREAM_10_IMAGE="quay.io/centos/centos@sha256:ad14f7d919c9b9995a
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 installer="${repo_root}/install.sh"
+deploy_stack="${repo_root}/deploy/stack.yml"
 centos_8_fixture="${repo_root}/test/installer/testdata/centos-8-os-release"
 ip_overlap_fixture="${repo_root}/test/installer/testdata/ip-overlap"
 
@@ -45,6 +46,15 @@ command -v docker >/dev/null 2>&1 || {
   printf 'docker is required for installer distribution tests\n' >&2
   exit 1
 }
+
+deploy_stack_content=$(<"${deploy_stack}")
+assert_contains "${deploy_stack_content}" "mode: host"
+assert_contains "${deploy_stack_content}" $'    networks:\n      - nectar_control'
+assert_contains "${deploy_stack_content}" $'networks:\n  nectar_control:\n    external: true'
+if [[ "${deploy_stack_content}" == *"mode: ingress"* ]]; then
+  printf 'deploy/stack.yml must not publish Nectar through the Swarm ingress routing mesh\n' >&2
+  exit 1
+fi
 
 run_supported_dry_run "${CENTOS_STREAM_9_IMAGE}" "9"
 run_supported_dry_run "${CENTOS_STREAM_10_IMAGE}" "10"

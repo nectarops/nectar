@@ -17,10 +17,12 @@ services:
       - target: 8080
         published: ${NECTAR_WEB_PORT:-8080}
         protocol: tcp
-        mode: ingress
+        mode: host
     volumes:
       - nectar_data:/var/lib/nectar
       - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - nectar_control
     secrets:
       - nectar_init_token
     deploy:
@@ -39,6 +41,10 @@ services:
         parallelism: 1
         order: stop-first
         failure_action: rollback
+
+networks:
+  nectar_control:
+    external: true
 
 volumes:
   nectar_data:
