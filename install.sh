@@ -15,6 +15,7 @@ readonly DATA_DIR="/var/lib/nectar"
 readonly STACK_NAME="nectar"
 readonly SECRET_NAME="nectar_init_token"
 readonly NETWORK_NAME="nectar_control"
+readonly WEB_PUBLISH_MODE="host"
 readonly DAEMON_CONFIG="/etc/docker/daemon.json"
 
 docker_version=""
@@ -748,6 +749,7 @@ else
 fi
 
 ensure_nectar_network
+log "Nectar Web port ${web_port} will be published in ${WEB_PUBLISH_MODE} mode on the labeled Manager."
 
 service_exists=false
 if [[ "${dry_run}" != true ]] && docker service inspect "${STACK_NAME}_nectar" >/dev/null 2>&1; then
@@ -807,7 +809,7 @@ services:
       - target: 8080
         published: ${web_port}
         protocol: tcp
-        mode: ingress
+        mode: ${WEB_PUBLISH_MODE}
     volumes:
       - nectar_data:/var/lib/nectar
       - /var/run/docker.sock:/var/run/docker.sock

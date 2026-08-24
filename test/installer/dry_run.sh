@@ -37,6 +37,7 @@ run_supported_dry_run() {
   assert_contains "${output}" "Would configure Docker's signed CentOS Stream repository for release ${version}."
   assert_contains "${output}" "[dry-run] dnf -y install ca-certificates gnupg2"
   assert_contains "${output}" "Would create or reuse dedicated Nectar Overlay network nectar_control (172.31.255.0/24)."
+  assert_contains "${output}" "Nectar Web port 8080 will be published in host mode on the labeled Manager."
   assert_contains "${output}" "Dry run completed. No host changes were made."
 }
 

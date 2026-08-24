@@ -89,6 +89,10 @@ The explicit subnet must be a network-aligned IPv4 `/24` and must not overlap ad
 the Manager. The installer reuses the existing `nectar_control` network on safe reruns and refuses to silently
 replace its subnet.
 
+The Web port is published in Swarm `host` mode on the labeled Nectar Manager. This keeps the Manager IP and port
+as the recovery URL without depending on the cluster's routing-mesh `ingress` network, which may conflict with
+networks created before Nectar is installed.
+
 For hosts that cannot reach Docker's default repository, set a trusted HTTPS mirror with the same Docker CE repository layout. The signing key fingerprint is still verified before the mirror is configured. For example, on Tencent Cloud:
 
 ```bash
