@@ -15,3 +15,8 @@ All notable user-facing changes are documented here. This project follows Semant
 - Ubuntu/Debian installer with explicit Docker version safety checks.
 - Reproducible container build, API contract, tests, and open-source project files.
 - One-command local launcher with an isolated data directory and automatic browser opening.
+
+### Fixed
+
+- Prevent Nectar Swarm tasks from being rejected on hosts whose existing Docker networks overlap Swarm's
+  automatically allocated Overlay subnet.

@@ -215,7 +215,10 @@ Responsibilities:
 - Validate the merged daemon configuration and protect Manager quorum before any required Docker restart.
 - Provide `--dry-run` to report checks and planned changes without mutation.
 - Publish root-level `install.sh` as a GitHub Release asset for the `curl -fsSL <release-url>/install.sh | sudo bash` flow.
-- Support non-interactive `--docker-version`, `--advertise-addr`, `--web-port`, `--nectar-version`, and `--dry-run` options.
+- Support non-interactive `--docker-version`, `--advertise-addr`, `--web-port`, `--nectar-version`,
+  `--network-subnet`, and `--dry-run` options.
+- Create a dedicated Overlay network from an IPv4 `/24` that does not overlap the Manager's routes or existing
+  Docker networks, while allowing operators to select a cluster-safe subnet explicitly.
 - Be safe to rerun after interruption by detecting completed work.
 - Record only non-sensitive installation logs and print a clear resume command after failure.
 - Poll `/health/ready` after deploying the Swarm service.

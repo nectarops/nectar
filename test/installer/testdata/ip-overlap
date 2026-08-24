@@ -1,0 +1,11 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-only
+
+case "$*" in
+  "-o -4 address show")
+    printf '%s\n' '2: eth0 inet 172.30.10.8/24 scope global eth0'
+    ;;
+  "-o -4 route show")
+    printf '%s\n' '172.30.10.0/24 dev eth0 proto kernel scope link src 172.30.10.8'
+    ;;
+esac
