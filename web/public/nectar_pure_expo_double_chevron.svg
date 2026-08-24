@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="800" height="800">
+  <rect width="800" height="800" fill="#FFFFFF"/>
+  <g transform="translate(400, 400) scale(1.6)">
+    <!-- Top Left Ingress Ribbon (Pure Tech Black) -->
+    <path d="M -130 170 
+             L -130 -110 
+             L 10 -110 
+             L 130 10 
+             L 130 -70 
+             L -50 -70 
+             L -50 170 
+             Z" 
+          fill="#000000"/>
+          
+    <!-- Bottom Right Ingress Ribbon (Pure Nectar Amber) -->
+    <path d="M 130 -170 
+             L 130 110 
+             L -10 110 
+             L -130 -10 
+             L -130 70 
+             L 50 70 
+             L 50 -170 
+             Z" 
+          fill="#F59E0B"/>
+  </g>
+</svg>
