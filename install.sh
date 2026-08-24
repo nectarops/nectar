@@ -5,7 +5,8 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 readonly PROGRAM="nectar-installer"
-readonly DOCKER_KEY_FINGERPRINT="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
+readonly DOCKER_DEB_KEY_FINGERPRINT="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
+readonly DOCKER_RPM_KEY_FINGERPRINT="060A61C51B558A7F742B77AAC52FEB6B621E9F35"
 readonly DEFAULT_DOCKER_REPOSITORY_URL="https://download.docker.com/linux"
 readonly DEFAULT_NECTAR_VERSION="0.1.1"
 readonly DEFAULT_WEB_PORT="8080"
@@ -25,7 +26,7 @@ dry_run=false
 docker_config_changed=false
 usage() {
   cat <<'EOF'
-Install Nectar on an Ubuntu or Debian Docker Swarm Manager.
+Install Nectar on an Ubuntu, Debian, or CentOS Stream Docker Swarm Manager.
 
 Usage: sudo bash install.sh [options]
 
@@ -101,7 +102,7 @@ while (($# > 0)); do
       dry_run=true
       shift
       ;;
-    --help|-h)
+    --help | -h)
       usage
       exit 0
       ;;
@@ -129,13 +130,34 @@ fi
 source /etc/os-release
 distribution=${ID,,}
 case "${distribution}" in
-  ubuntu|debian) ;;
-  *) die "supported distributions are Ubuntu and Debian; found ${ID:-unknown}" ;;
+  ubuntu | debian)
+    package_family="deb"
+    ;;
+  centos)
+    centos_major=${VERSION_ID%%.*}
+    centos_name=${NAME:-}
+    centos_name=${centos_name,,}
+    [[ "${centos_name}" == "centos stream" ]] ||
+      die "supported CentOS releases are CentOS Stream 9 and 10; found ${PRETTY_NAME:-${NAME:-unknown}}"
+    case "${centos_major}" in
+      9 | 10) ;;
+      *) die "supported CentOS releases are CentOS Stream 9 and 10; found ${PRETTY_NAME:-${VERSION_ID:-unknown}}" ;;
+    esac
+    command -v dnf >/dev/null 2>&1 || die "dnf is required on CentOS Stream"
+    package_family="rpm"
+    ;;
+  *) die "supported distributions are Ubuntu, Debian, and CentOS Stream 9 or 10; found ${ID:-unknown}" ;;
 esac
 
 case "$(uname -m)" in
-  x86_64) architecture="amd64" ;;
-  aarch64|arm64) architecture="arm64" ;;
+  x86_64)
+    architecture="amd64"
+    rpm_architecture="x86_64"
+    ;;
+  aarch64 | arm64)
+    architecture="arm64"
+    rpm_architecture="aarch64"
+    ;;
   *) die "supported architectures are amd64 and arm64; found $(uname -m)" ;;
 esac
 
@@ -179,12 +201,42 @@ if [[ -n "${installed_docker}" ]]; then
   fi
 fi
 
-install_docker() {
+download_and_verify_docker_key() {
+  local destination=$1
+  local expected_fingerprint=$2
+  local fingerprint
+  local gpg_command
+
+  if [[ "${dry_run}" == true ]]; then
+    log "Would download and verify Docker's repository signing key fingerprint ${expected_fingerprint}."
+    return
+  fi
+
+  gpg_command=$(command -v gpg || command -v gpg2 || true)
+  [[ -n "${gpg_command}" ]] || die "gpg is required to verify Docker's repository signing key"
+  if ! curl --retry 5 --retry-all-errors --connect-timeout 15 -fsSL \
+    "${docker_repository_url}/${distribution}/gpg" -o "${destination}.tmp"; then
+    rm -f "${destination}.tmp"
+    die "unable to download Docker's signing key from ${docker_repository_url}; check outbound HTTPS or set NECTAR_DOCKER_REPOSITORY_URL to a trusted mirror"
+  fi
+  if ! fingerprint=$("${gpg_command}" --show-keys --with-colons "${destination}.tmp" |
+    awk -F: '$1 == "fpr" {print $10; exit}'); then
+    rm -f "${destination}.tmp"
+    die "unable to inspect Docker's repository signing key"
+  fi
+  [[ "${fingerprint}" == "${expected_fingerprint}" ]] || {
+    rm -f "${destination}.tmp"
+    die "Docker repository signing-key fingerprint did not match"
+  }
+  install -m 0644 "${destination}.tmp" "${destination}"
+  rm -f "${destination}.tmp"
+}
+
+install_docker_deb() {
   local keyring="/etc/apt/keyrings/docker.asc"
   local repo_arch
   local codename
   local package_version=""
-  local fingerprint
 
   repo_arch=$(dpkg --print-architecture)
   [[ "${repo_arch}" == "${architecture}" ]] || die "dpkg architecture ${repo_arch} does not match host ${architecture}"
@@ -195,28 +247,13 @@ install_docker() {
   run apt-get install -y ca-certificates curl gpg
   run install -m 0755 -d /etc/apt/keyrings
 
-  if [[ "${dry_run}" == true ]]; then
-    log "Would download and verify Docker's repository signing key fingerprint ${DOCKER_KEY_FINGERPRINT}."
-  else
-    if ! curl --retry 5 --retry-all-errors --connect-timeout 15 -fsSL \
-      "${docker_repository_url}/${distribution}/gpg" -o "${keyring}.tmp"; then
-      rm -f "${keyring}.tmp"
-      die "unable to download Docker's signing key from ${docker_repository_url}; check outbound HTTPS or set NECTAR_DOCKER_REPOSITORY_URL to a trusted mirror"
-    fi
-    fingerprint=$(gpg --show-keys --with-colons "${keyring}.tmp" | awk -F: '$1 == "fpr" {print $10; exit}')
-    [[ "${fingerprint}" == "${DOCKER_KEY_FINGERPRINT}" ]] || {
-      rm -f "${keyring}.tmp"
-      die "Docker repository signing-key fingerprint did not match"
-    }
-    install -m 0644 "${keyring}.tmp" "${keyring}"
-    rm -f "${keyring}.tmp"
-  fi
+  download_and_verify_docker_key "${keyring}" "${DOCKER_DEB_KEY_FINGERPRINT}"
 
   if [[ "${dry_run}" == true ]]; then
     log "Would configure Docker's signed ${distribution} repository for ${codename}."
   else
     printf 'deb [arch=%s signed-by=%s] %s/%s %s stable\n' \
-      "${repo_arch}" "${keyring}" "${docker_repository_url}" "${distribution}" "${codename}" > /etc/apt/sources.list.d/docker.list
+      "${repo_arch}" "${keyring}" "${docker_repository_url}" "${distribution}" "${codename}" >/etc/apt/sources.list.d/docker.list
   fi
   run apt-get update
 
@@ -240,14 +277,137 @@ install_docker() {
   fi
 }
 
-ensure_json_tool() {
-  if command -v jq >/dev/null 2>&1; then
+dnf_with_docker_unpinned() {
+  local dnf_version
+  dnf_version=$(dnf --version 2>/dev/null | sed -n '1p')
+  if [[ "${dnf_version}" == dnf5* || "${dnf_version}" == 5.* ]]; then
+    run dnf -y --setopt=disable_excludes=docker-ce-stable "$@"
+  else
+    run dnf -y --disableexcludes=docker-ce-stable "$@"
+  fi
+}
+
+version_is_less() {
+  local first
+  first=$(printf '%s\n%s\n' "$1" "$2" | sort -V | sed -n '1p')
+  [[ "$1" != "$2" && "${first}" == "$1" ]]
+}
+
+install_docker_rpm() {
+  local cli_package_version=""
+  local dnf_basearch="\$basearch"
+  local dnf_releasever="\$releasever"
+  local engine_package_version=""
+  local keyring="/etc/pki/rpm-gpg/docker-ce.asc"
+  local repo_arch
+  local repo_file="/etc/yum.repos.d/docker-ce.repo"
+
+  repo_arch=$(rpm --eval '%{_arch}')
+  [[ "${repo_arch}" == "${rpm_architecture}" ]] ||
+    die "RPM architecture ${repo_arch} does not match host ${rpm_architecture}"
+  run dnf -y install ca-certificates gnupg2
+  if ! command -v curl >/dev/null 2>&1; then
+    run dnf -y install curl-minimal
+  fi
+  run install -m 0755 -d /etc/pki/rpm-gpg /etc/yum.repos.d
+  download_and_verify_docker_key "${keyring}" "${DOCKER_RPM_KEY_FINGERPRINT}"
+
+  if [[ "${dry_run}" == true ]]; then
+    log "Would configure Docker's signed CentOS Stream repository for release ${centos_major}."
+  else
+    {
+      printf '[docker-ce-stable]\n'
+      printf 'name=Docker CE Stable - %s\n' "${dnf_basearch}"
+      printf 'baseurl=%s/centos/%s/%s/stable\n' \
+        "${docker_repository_url}" "${dnf_releasever}" "${dnf_basearch}"
+      printf 'enabled=1\n'
+      printf 'gpgcheck=1\n'
+      printf 'gpgkey=file://%s\n' "${keyring}"
+      printf 'excludepkgs=docker-ce,docker-ce-cli\n'
+    } >"${repo_file}"
+    chmod 0644 "${repo_file}"
+  fi
+  run dnf -y --refresh makecache
+
+  if [[ "${dry_run}" == true ]]; then
+    log "Would install and pin Docker Engine ${docker_version:-the current repository version}."
     return
   fi
-  run apt-get update
-  run apt-get install -y jq
+
+  if [[ -n "${docker_version}" ]]; then
+    engine_package_version=$(
+      LC_ALL=C dnf_with_docker_unpinned --showduplicates list docker-ce 2>/dev/null |
+        awk -v requested="${docker_version}" \
+          '$1 ~ /^docker-ce\./ && $2 ~ ("^[0-9]+:" requested "-") {print $2}' |
+        sort -Vr |
+        sed -n '1p'
+    )
+    [[ -n "${engine_package_version}" ]] ||
+      die "Docker ${docker_version} is not available for this distribution"
+  else
+    engine_package_version=$(
+      LC_ALL=C dnf_with_docker_unpinned --showduplicates list docker-ce 2>/dev/null |
+        awk '$1 ~ /^docker-ce\./ && $2 ~ /^[0-9]+:/ {print $2}' |
+        sort -Vr |
+        sed -n '1p'
+    )
+    [[ -n "${engine_package_version}" ]] || die "Docker's repository did not provide docker-ce"
+    docker_version=${engine_package_version#*:}
+    docker_version=${docker_version%%-*}
+  fi
+
+  cli_package_version=$(
+    LC_ALL=C dnf_with_docker_unpinned --showduplicates list docker-ce-cli 2>/dev/null |
+      awk -v requested="${docker_version}" \
+        '$1 ~ /^docker-ce-cli\./ && $2 ~ ("^[0-9]+:" requested "-") {print $2}' |
+      sort -Vr |
+      sed -n '1p'
+  )
+  [[ -n "${cli_package_version}" ]] ||
+    die "Docker CLI ${docker_version} is not available for this distribution"
+
+  if [[ -n "${installed_docker}" ]] && version_is_less "${docker_version}" "${installed_docker}"; then
+    dnf_with_docker_unpinned downgrade \
+      "docker-ce-${engine_package_version}" \
+      "docker-ce-cli-${cli_package_version}"
+    dnf_with_docker_unpinned install containerd.io docker-buildx-plugin docker-compose-plugin
+  else
+    dnf_with_docker_unpinned install \
+      "docker-ce-${engine_package_version}" \
+      "docker-ce-cli-${cli_package_version}" \
+      containerd.io docker-buildx-plugin docker-compose-plugin
+  fi
+}
+
+install_docker() {
+  case "${package_family}" in
+    deb) install_docker_deb ;;
+    rpm) install_docker_rpm ;;
+    *) die "unsupported package family: ${package_family}" ;;
+  esac
+}
+
+ensure_runtime_tools() {
+  if command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
+    return
+  fi
+
+  case "${package_family}" in
+    deb)
+      run apt-get update
+      run apt-get install -y ca-certificates curl jq
+      ;;
+    rpm)
+      run dnf -y install ca-certificates jq
+      if ! command -v curl >/dev/null 2>&1; then
+        run dnf -y install curl-minimal
+      fi
+      ;;
+    *) die "unsupported package family: ${package_family}" ;;
+  esac
   if [[ "${dry_run}" != true ]]; then
     command -v jq >/dev/null 2>&1 || die "jq is required to merge ${DAEMON_CONFIG} safely"
+    command -v curl >/dev/null 2>&1 || die "curl is required for readiness checks"
   fi
 }
 
@@ -278,7 +438,7 @@ configure_docker_logging() {
     return
   fi
 
-  ensure_json_tool
+  ensure_runtime_tools
   install -d -m 0755 "$(dirname "${DAEMON_CONFIG}")"
   local candidate
   candidate=$(mktemp "${DAEMON_CONFIG}.tmp.XXXXXX")
@@ -327,7 +487,7 @@ configure_docker_logging() {
   log "Updated ${DAEMON_CONFIG} with bounded json-file log rotation."
 }
 
-if [[ -z "${installed_docker}" || ( -n "${docker_version}" && "${installed_docker}" != "${docker_version}" ) ]]; then
+if [[ -z "${installed_docker}" || (-n "${docker_version}" && "${installed_docker}" != "${docker_version}") ]]; then
   install_docker
 fi
 
@@ -365,7 +525,7 @@ case "${swarm_state}" in
     fi
     log "This host is already an active Swarm Manager; preserving its membership."
     ;;
-  pending|locked|error)
+  pending | locked | error)
     die "Docker reports Swarm state ${swarm_state}; resolve it before installing"
     ;;
   *) die "unexpected Swarm state: ${swarm_state}" ;;
@@ -402,9 +562,9 @@ token_file="${DATA_DIR}/bootstrap-token"
 if [[ "${dry_run}" != true && ! -s "${token_file}" ]]; then
   umask 077
   if command -v openssl >/dev/null 2>&1; then
-    openssl rand -base64 32 | tr -d '\n' > "${token_file}"
+    openssl rand -base64 32 | tr -d '\n' >"${token_file}"
   else
-    head -c 32 /dev/urandom | base64 | tr -d '\n' > "${token_file}"
+    head -c 32 /dev/urandom | base64 | tr -d '\n' >"${token_file}"
   fi
   chmod 0600 "${token_file}"
 fi
@@ -419,7 +579,7 @@ stack_file="${INSTALL_DIR}/stack.yml"
 if [[ "${dry_run}" == true ]]; then
   log "Would write the pinned Swarm stack to ${stack_file}."
 else
-  cat > "${stack_file}" <<EOF
+  cat >"${stack_file}" <<EOF
 version: "3.9"
 services:
   nectar:

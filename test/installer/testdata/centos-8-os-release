@@ -1,0 +1,7 @@
+NAME="CentOS Linux"
+VERSION="8"
+ID="centos"
+ID_LIKE="rhel fedora"
+VERSION_ID="8"
+PLATFORM_ID="platform:el8"
+PRETTY_NAME="CentOS Linux 8"

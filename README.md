@@ -10,7 +10,8 @@ There is no hosted account, node-count license, telemetry requirement, or paid f
 
 ## What works today
 
-- A single idempotent Ubuntu/Debian host installer with explicit Docker Engine version selection.
+- A single idempotent Ubuntu, Debian, and CentOS Stream host installer with explicit Docker Engine version
+  selection.
 - Safe handling of an existing Docker installation: version changes require `--force-docker-version`.
 - Persistence of the verified Manager Docker Engine version as a protected cluster target in SQLite.
 - Safe merging and validation of bounded Docker `json-file` log rotation in `/etc/docker/daemon.json`.
@@ -29,7 +30,10 @@ There is no hosted account, node-count license, telemetry requirement, or paid f
 
 ## Supported platforms
 
-The host installer currently supports Ubuntu and Debian with systemd and `apt`, on `amd64` and `arm64`. It accepts a new host, an existing Swarm Manager, or an existing compatible Docker Engine.
+The host installer supports Ubuntu and Debian with `apt`, plus CentOS Stream 9 and 10 with `dnf`. All
+supported distributions require systemd and may run on `amd64` or `arm64`. The installer accepts a new
+host, an existing Swarm Manager, or an existing compatible Docker Engine. CentOS Linux 7 and 8 are not
+supported because Docker no longer lists them as maintained installation targets.
 
 Nectar must run on a Swarm Manager with access to `/var/run/docker.sock`. Docker socket access is equivalent to root access; isolate the control-plane host and restrict access to Nectar.
 
@@ -129,7 +133,9 @@ The development launcher installs the pinned web dependencies, builds the embedd
 
 Use `./scripts/dev.sh --help` to select another address or data directory, require Docker, reuse an existing build, or disable automatic browser opening.
 
-`install.sh` changes a Linux host and cannot be exercised faithfully by `make dev` on macOS. Use `sudo bash install.sh --dry-run --advertise-addr <linux-host-ip>` in a disposable Ubuntu/Debian VM first, then run it without `--dry-run` for a real installation.
+`install.sh` changes a Linux host and cannot be exercised faithfully by `make dev` on macOS. Use
+`sudo bash install.sh --dry-run --advertise-addr <linux-host-ip>` in a disposable Ubuntu, Debian, or CentOS
+Stream VM first, then run it without `--dry-run` for a real installation.
 
 Run all project checks:
 

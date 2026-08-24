@@ -208,7 +208,7 @@ Control-plane HA requires an explicit design; increasing replicas from one to th
 
 Responsibilities:
 
-- Initially support Ubuntu and Debian; add RHEL-family distributions later.
+- Support Ubuntu, Debian, and maintained CentOS Stream releases through their native package managers.
 - Install through the distribution package manager and Docker's official repositories rather than static production binaries.
 - Map the requested Engine semantic version to the distribution-specific package version.
 - Preserve unrelated Docker daemon settings while enforcing `json-file` rotation at 100 MB with three compressed files.
@@ -486,7 +486,7 @@ Acceptance: an operator can sign in, persist configuration, and view cluster sta
 
 Deliverables:
 
-- Ubuntu/Debian installer with optional pinned Docker version.
+- Ubuntu, Debian, and CentOS Stream installer with optional pinned Docker version.
 - Swarm initialization and Nectar service deployment.
 - Read-only node, service, task, and network views.
 
