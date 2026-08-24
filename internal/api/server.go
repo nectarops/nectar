@@ -215,7 +215,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 			s.logger.Warn("delete session", "error", err)
 		}
 	}
-	s.clearSessionCookie(w)
+	s.clearSessionCookie(w, r)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -326,14 +326,14 @@ func requestUsesHTTPS(r *http.Request) bool {
 	return strings.EqualFold(forwardedProto, "https")
 }
 
-func (s *Server) clearSessionCookie(w http.ResponseWriter) {
+func (s *Server) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   s.cookieSecure,
+		Secure:   s.cookieSecure || requestUsesHTTPS(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 }

@@ -97,7 +97,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			if !errors.Is(err, domain.ErrUnauthenticated) {
 				s.logger.Warn("authenticate request", "error", err)
 			}
-			s.clearSessionCookie(w)
+			s.clearSessionCookie(w, r)
 			writeError(w, http.StatusUnauthorized, "unauthenticated", "authentication required")
 			return
 		}
