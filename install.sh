@@ -14,12 +14,18 @@ readonly INSTALL_DIR="/opt/nectar"
 readonly DATA_DIR="/var/lib/nectar"
 readonly STACK_NAME="nectar"
 readonly SECRET_NAME="nectar_init_token"
+readonly NETWORK_NAME="nectar_control"
 readonly DAEMON_CONFIG="/etc/docker/daemon.json"
 
 docker_version=""
 advertise_addr=""
 web_port="${DEFAULT_WEB_PORT}"
 nectar_version="${DEFAULT_NECTAR_VERSION}"
+network_subnet=${NECTAR_NETWORK_SUBNET:-}
+network_subnet_explicit=false
+if [[ -n "${network_subnet}" ]]; then
+  network_subnet_explicit=true
+fi
 force_docker_version=false
 dry_run=false
 
@@ -35,6 +41,7 @@ Options:
   --advertise-addr ADDRESS       Manager advertise address or interface.
   --web-port PORT               Published Web port (default: 8080).
   --nectar-version VERSION       Deploy this pinned Nectar image tag.
+  --network-subnet CIDR          Dedicated, unused IPv4 /24 for Nectar's Overlay network.
   --force-docker-version        Explicitly allow changing an existing Docker version.
   --dry-run                     Validate and print planned actions without changing the host.
   --help                        Show this help.
@@ -42,6 +49,7 @@ Options:
 Environment:
   NECTAR_IMAGE                  Override the complete pinned container image reference.
   NECTAR_DOCKER_REPOSITORY_URL  Override the Docker CE repository root.
+  NECTAR_NETWORK_SUBNET         Override Nectar's automatically selected Overlay subnet.
 EOF
 }
 
@@ -72,6 +80,197 @@ run() {
   "$@"
 }
 
+ipv4_to_integer() {
+  local address=$1
+  local first
+  local second
+  local third
+  local fourth
+  local octet
+
+  [[ "${address}" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || return 1
+  local IFS=.
+  read -r first second third fourth <<<"${address}"
+  for octet in "${first}" "${second}" "${third}" "${fourth}"; do
+    [[ "${octet}" == "0" || "${octet}" != 0* ]] || return 1
+    ((10#${octet} <= 255)) || return 1
+  done
+  printf '%u\n' "$(((10#${first} << 24) | (10#${second} << 16) | (10#${third} << 8) | 10#${fourth}))"
+}
+
+cidr_bounds() {
+  local cidr=$1
+  local address=${cidr%/*}
+  local prefix=${cidr#*/}
+  local address_integer
+  local mask
+  local network
+  local broadcast
+
+  [[ "${cidr}" == */* && "${prefix}" =~ ^([0-9]|[12][0-9]|3[0-2])$ ]] || return 1
+  address_integer=$(ipv4_to_integer "${address}") || return 1
+  if ((10#${prefix} == 0)); then
+    mask=0
+  else
+    mask=$(((4294967295 << (32 - 10#${prefix})) & 4294967295))
+  fi
+  network=$((address_integer & mask))
+  broadcast=$((network | (4294967295 ^ mask)))
+  printf '%u %u\n' "${network}" "${broadcast}"
+}
+
+validate_network_subnet() {
+  local subnet=$1
+  local address=${subnet%/*}
+  local prefix=${subnet#*/}
+  local address_integer
+  local bounds
+  local first
+  local network
+  local second
+  local third
+  local fourth
+
+  [[ "${subnet}" == */* && "${prefix}" == "24" ]] ||
+    die "Nectar network subnet must be an IPv4 /24 CIDR, for example 172.30.255.0/24"
+  address_integer=$(ipv4_to_integer "${address}") ||
+    die "Nectar network subnet must contain a valid IPv4 address"
+  local IFS=.
+  read -r first second third fourth <<<"${address}"
+  if ! ((10#${first} == 10 || (\
+    10#${first} == 172 && 10#${second} >= 16 && 10#${second} <= 31) || (\
+    10#${first} == 192 && 10#${second} == 168))); then
+    die "Nectar network subnet must use RFC 1918 private address space"
+  fi
+  bounds=$(cidr_bounds "${subnet}") || die "Nectar network subnet is invalid"
+  IFS=' ' read -r network _ <<<"${bounds}"
+  ((address_integer == network)) ||
+    die "Nectar network subnet must use the network address; expected the final octet to be 0 for a /24"
+}
+
+cidrs_overlap() {
+  local first_bounds
+  local first_start
+  local first_end
+  local second_bounds
+  local second_start
+  local second_end
+
+  first_bounds=$(cidr_bounds "$1") || return 1
+  second_bounds=$(cidr_bounds "$2") || return 1
+  local IFS=' '
+  read -r first_start first_end <<<"${first_bounds}"
+  read -r second_start second_end <<<"${second_bounds}"
+  ((first_start <= second_end && second_start <= first_end))
+}
+
+collect_used_ipv4_cidrs() {
+  local network_id
+
+  if command -v ip >/dev/null 2>&1; then
+    ip -o -4 address show 2>/dev/null | awk '$4 ~ /^[0-9.]+\/[0-9]+$/ {print $4}'
+    ip -o -4 route show 2>/dev/null |
+      awk '{for (field = 1; field <= NF; field++) if ($field ~ /^[0-9.]+\/[0-9]+$/) {print $field; break}}'
+  fi
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    while IFS= read -r network_id; do
+      docker network inspect --format '{{range .IPAM.Config}}{{println .Subnet}}{{end}}' \
+        "${network_id}" 2>/dev/null || true
+    done < <(docker network ls --quiet)
+  fi
+}
+
+find_overlapping_cidr() {
+  local candidate=$1
+  local used_cidrs=$2
+  local used_cidr
+
+  while IFS= read -r used_cidr; do
+    [[ -n "${used_cidr}" ]] || continue
+    cidr_bounds "${used_cidr}" >/dev/null 2>&1 || continue
+    if cidrs_overlap "${candidate}" "${used_cidr}"; then
+      printf '%s\n' "${used_cidr}"
+      return 0
+    fi
+  done <<<"${used_cidrs}"
+  return 1
+}
+
+select_network_subnet() {
+  local candidate
+  local driver
+  local existing_subnet
+  local managed
+  local network_subnets
+  local network_prefix
+  local overlap
+  local scope
+  local third_octet
+  local used_cidrs
+
+  if [[ "${dry_run}" != true ]] && docker network inspect "${NETWORK_NAME}" >/dev/null 2>&1; then
+    driver=$(docker network inspect --format '{{.Driver}}' "${NETWORK_NAME}")
+    scope=$(docker network inspect --format '{{.Scope}}' "${NETWORK_NAME}")
+    managed=$(docker network inspect --format '{{index .Labels "io.nectar.managed"}}' "${NETWORK_NAME}")
+    [[ "${driver}" == "overlay" && "${scope}" == "swarm" ]] ||
+      die "Docker network ${NETWORK_NAME} already exists but is not a Swarm Overlay network"
+    [[ "${managed}" == "true" ]] ||
+      die "Docker network ${NETWORK_NAME} already exists but is not managed by Nectar"
+    network_subnets=$(docker network inspect \
+      --format '{{range .IPAM.Config}}{{println .Subnet}}{{end}}' "${NETWORK_NAME}" | awk 'NF')
+    [[ $(printf '%s\n' "${network_subnets}" | awk 'NF {count++} END {print count+0}') -eq 1 ]] ||
+      die "Docker network ${NETWORK_NAME} must have exactly one IPv4 subnet"
+    existing_subnet=${network_subnets}
+    validate_network_subnet "${existing_subnet}"
+    if [[ "${network_subnet_explicit}" == true && "${network_subnet}" != "${existing_subnet}" ]]; then
+      die "Docker network ${NETWORK_NAME} already uses ${existing_subnet}; refusing to replace it with ${network_subnet}"
+    fi
+    network_subnet=${existing_subnet}
+    log "Reusing Nectar Overlay network ${NETWORK_NAME} (${network_subnet})."
+    return
+  fi
+
+  used_cidrs=$(collect_used_ipv4_cidrs)
+  if [[ "${network_subnet_explicit}" == true ]]; then
+    validate_network_subnet "${network_subnet}"
+    if overlap=$(find_overlapping_cidr "${network_subnet}" "${used_cidrs}"); then
+      die "Nectar network subnet ${network_subnet} overlaps existing address space ${overlap}; choose an unused /24 with --network-subnet"
+    fi
+    return
+  fi
+
+  for network_prefix in "172.31" "192.168" "10.255"; do
+    for ((third_octet = 255; third_octet >= 224; third_octet--)); do
+      candidate="${network_prefix}.${third_octet}.0/24"
+      if ! find_overlapping_cidr "${candidate}" "${used_cidrs}" >/dev/null; then
+        network_subnet=${candidate}
+        return
+      fi
+    done
+  done
+
+  die "unable to find an unused private /24 for Nectar; pass --network-subnet after reviewing Docker networks and host routes"
+}
+
+ensure_nectar_network() {
+  select_network_subnet
+  if [[ "${dry_run}" == true ]]; then
+    log "Would create or reuse dedicated Nectar Overlay network ${NETWORK_NAME} (${network_subnet})."
+    return
+  fi
+  if docker network inspect "${NETWORK_NAME}" >/dev/null 2>&1; then
+    return
+  fi
+  if ! docker network create \
+    --driver overlay \
+    --label io.nectar.managed=true \
+    --subnet "${network_subnet}" \
+    "${NETWORK_NAME}" >/dev/null; then
+    die "unable to create Nectar Overlay network ${NETWORK_NAME} with subnet ${network_subnet}; inspect existing Docker networks and host routes"
+  fi
+  log "Created Nectar Overlay network ${NETWORK_NAME} (${network_subnet})."
+}
+
 while (($# > 0)); do
   case "$1" in
     --docker-version)
@@ -92,6 +291,12 @@ while (($# > 0)); do
     --nectar-version)
       (($# >= 2)) || die "--nectar-version requires a value"
       nectar_version=$2
+      shift 2
+      ;;
+    --network-subnet)
+      (($# >= 2)) || die "--network-subnet requires a value"
+      network_subnet=$2
+      network_subnet_explicit=true
       shift 2
       ;;
     --force-docker-version)
@@ -123,6 +328,9 @@ if [[ -n "${docker_version}" ]]; then
 fi
 if [[ -n "${advertise_addr}" ]]; then
   [[ "${advertise_addr}" =~ ^[0-9A-Za-z_.:%-]+$ ]] || die "advertise address contains unsupported characters"
+fi
+if [[ "${network_subnet_explicit}" == true ]]; then
+  validate_network_subnet "${network_subnet}"
 fi
 
 [[ -r /etc/os-release ]] || die "/etc/os-release is required"
@@ -388,17 +596,17 @@ install_docker() {
 }
 
 ensure_runtime_tools() {
-  if command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
+  if command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 && command -v ip >/dev/null 2>&1; then
     return
   fi
 
   case "${package_family}" in
     deb)
       run apt-get update
-      run apt-get install -y ca-certificates curl jq
+      run apt-get install -y ca-certificates curl iproute2 jq
       ;;
     rpm)
-      run dnf -y install ca-certificates jq
+      run dnf -y install ca-certificates iproute jq
       if ! command -v curl >/dev/null 2>&1; then
         run dnf -y install curl-minimal
       fi
@@ -408,6 +616,7 @@ ensure_runtime_tools() {
   if [[ "${dry_run}" != true ]]; then
     command -v jq >/dev/null 2>&1 || die "jq is required to merge ${DAEMON_CONFIG} safely"
     command -v curl >/dev/null 2>&1 || die "curl is required for readiness checks"
+    command -v ip >/dev/null 2>&1 || die "ip is required to select a non-overlapping Nectar network"
   fi
 }
 
@@ -538,6 +747,8 @@ else
   log "Would label the current Manager node nectar.control=true."
 fi
 
+ensure_nectar_network
+
 service_exists=false
 if [[ "${dry_run}" != true ]] && docker service inspect "${STACK_NAME}_nectar" >/dev/null 2>&1; then
   service_exists=true
@@ -600,6 +811,8 @@ services:
     volumes:
       - nectar_data:/var/lib/nectar
       - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - ${NETWORK_NAME}
     secrets:
       - ${SECRET_NAME}
     deploy:
@@ -618,6 +831,9 @@ services:
         parallelism: 1
         order: stop-first
         failure_action: rollback
+networks:
+  ${NETWORK_NAME}:
+    external: true
 volumes:
   nectar_data:
 secrets:
@@ -631,16 +847,26 @@ run docker stack deploy --detach=true "${STACK_NAME}" --compose-file "${stack_fi
 
 setup_url="http://${advertise_addr}:${web_port}/"
 if [[ "${dry_run}" != true ]]; then
-  log "Waiting for Nectar readiness at ${setup_url}health/ready …"
+  readiness_url="http://127.0.0.1:${web_port}/health/ready"
+  log "Waiting for local Nectar readiness at ${readiness_url} …"
   ready=false
+  latest_task_error=""
   for _ in $(seq 1 60); do
-    if curl -fsS --max-time 3 "${setup_url}health/ready" >/dev/null 2>&1; then
+    if curl -fsS --max-time 3 "${readiness_url}" >/dev/null 2>&1; then
       ready=true
       break
     fi
+    task_error=$(docker service ps --no-trunc --format '{{.Error}}' "${STACK_NAME}_nectar" 2>/dev/null |
+      awk 'NF {print; exit}' || true)
+    [[ -z "${task_error}" ]] || latest_task_error=${task_error}
     sleep 2
   done
-  [[ "${ready}" == true ]] || die "Nectar did not become ready; inspect: docker service ps ${STACK_NAME}_nectar"
+  if [[ "${ready}" != true ]]; then
+    if [[ -n "${latest_task_error}" ]]; then
+      die "Nectar did not become ready; latest Swarm task error: ${latest_task_error}; inspect: docker service ps ${STACK_NAME}_nectar --no-trunc"
+    fi
+    die "Nectar did not become ready; inspect: docker service ps ${STACK_NAME}_nectar --no-trunc"
+  fi
 
   printf '\nNectar is ready.\n'
   printf 'Setup URL: %s\n' "${setup_url}"

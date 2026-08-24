@@ -13,6 +13,7 @@ There is no hosted account, node-count license, telemetry requirement, or paid f
 - A single idempotent Ubuntu, Debian, and CentOS Stream host installer with explicit Docker Engine version
   selection.
 - Safe handling of an existing Docker installation: version changes require `--force-docker-version`.
+- Automatic selection of a dedicated Overlay `/24` that does not overlap local routes or existing Docker networks.
 - Persistence of the verified Manager Docker Engine version as a protected cluster target in SQLite.
 - Safe merging and validation of bounded Docker `json-file` log rotation in `/etc/docker/daemon.json`.
 - Swarm initialization without forcing a host out of an existing cluster.
@@ -72,6 +73,21 @@ Run `bash install.sh --help` for all options. The installer preserves unrelated 
   }
 }
 ```
+
+Before deploying the service, the installer creates a dedicated `nectar_control` Overlay network. It selects an
+unused private `/24` after checking the Manager's IPv4 addresses, routes, and existing Docker networks. In a
+multi-node cluster, verify that the selected subnet is also unused on the other nodes. To choose it explicitly,
+use `--network-subnet` or `NECTAR_NETWORK_SUBNET`:
+
+```bash
+sudo bash install.sh \
+  --advertise-addr 10.0.0.7 \
+  --network-subnet 172.30.255.0/24
+```
+
+The explicit subnet must be a network-aligned IPv4 `/24` and must not overlap address space already visible on
+the Manager. The installer reuses the existing `nectar_control` network on safe reruns and refuses to silently
+replace its subnet.
 
 For hosts that cannot reach Docker's default repository, set a trusted HTTPS mirror with the same Docker CE repository layout. The signing key fingerprint is still verified before the mirror is configured. For example, on Tencent Cloud:
 

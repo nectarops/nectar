@@ -23,12 +23,14 @@ install-web:
 format:
 	gofmt -w cmd internal
 	docker run --rm -v "$(CURDIR):/mnt" $(SHFMT_IMAGE) \
-		-w -i 2 -ci /mnt/install.sh /mnt/test/installer/dry_run.sh
+		-w -i 2 -ci /mnt/install.sh /mnt/test/installer/dry_run.sh \
+		/mnt/test/installer/testdata/ip-overlap
 
 format-check:
 	@test -z "$$(gofmt -l cmd internal)"
 	docker run --rm -v "$(CURDIR):/mnt:ro" $(SHFMT_IMAGE) \
-		-d -i 2 -ci /mnt/install.sh /mnt/test/installer/dry_run.sh
+		-d -i 2 -ci /mnt/install.sh /mnt/test/installer/dry_run.sh \
+		/mnt/test/installer/testdata/ip-overlap
 
 lint:
 	go vet ./...
@@ -36,7 +38,8 @@ lint:
 	bash -n install.sh
 	sh -n scripts/dev.sh scripts/sync-web-assets.sh
 	docker run --rm -v "$(CURDIR):/mnt:ro" $(SHELLCHECK_IMAGE) \
-		shellcheck -x /mnt/install.sh /mnt/test/installer/dry_run.sh
+		shellcheck -x /mnt/install.sh /mnt/test/installer/dry_run.sh \
+		/mnt/test/installer/testdata/ip-overlap
 
 typecheck:
 	npm --prefix web run typecheck
