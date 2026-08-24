@@ -219,6 +219,8 @@ Responsibilities:
   `--network-subnet`, and `--dry-run` options.
 - Create a dedicated Overlay network from an IPv4 `/24` that does not overlap the Manager's routes or existing
   Docker networks, while allowing operators to select a cluster-safe subnet explicitly.
+- Publish the Nectar recovery Web port in host mode on its labeled Manager instead of depending on the Swarm
+  routing-mesh ingress network.
 - Be safe to rerun after interruption by detecting completed work.
 - Record only non-sensitive installation logs and print a clear resume command after failure.
 - Poll `/health/ready` after deploying the Swarm service.
