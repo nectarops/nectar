@@ -58,6 +58,55 @@ export type ManagementAccess = {
   acmeEmail: string
 }
 
+export type NodeRole = 'worker' | 'manager'
+
+export type SwarmNode = {
+  id: string
+  hostname: string
+  role: NodeRole
+  status: string
+  availability: string
+  managerStatus?: string
+  address: string
+  managerAddress?: string
+  operatingSystem: string
+  architecture: string
+  dockerVersion: string
+  desiredDockerVersion: string
+  versionDrift: boolean
+}
+
+export type NodeEnrollment = {
+  id: string
+  requestedRole: NodeRole
+  status: string
+  hostname?: string
+  operatingSystem?: string
+  architecture?: string
+  advertiseAddress?: string
+  dataPathAddress?: string
+  dockerVersion?: string
+  nodeId?: string
+  message?: string
+  expiresAt: string
+  createdBy: number
+  createdAt: string
+  updatedAt: string
+}
+
+export type NodeEnrollmentEvent = {
+  id: number
+  enrollmentId: string
+  status: string
+  message: string
+  createdAt: string
+}
+
+export type NodeEnrollmentCommand = {
+  enrollment: NodeEnrollment
+  command: string
+}
+
 export class ApiError extends Error {
   readonly status: number
   readonly code?: string
@@ -206,6 +255,105 @@ export async function deployService(input: DeploymentInput): Promise<DeploymentR
     updated: requireBoolean(value.updated, 'updated'),
     warnings: value.warnings,
   }
+}
+
+export async function getNodes(signal?: AbortSignal): Promise<SwarmNode[]> {
+  const value = requireRecord(await request('/api/v1/nodes', {}, signal))
+  if (!Array.isArray(value.nodes)) {
+    throw new ApiError('API response field nodes is invalid.', 502)
+  }
+  return value.nodes.map(parseSwarmNode)
+}
+
+export async function getNodeEnrollments(signal?: AbortSignal): Promise<NodeEnrollment[]> {
+  const value = requireRecord(await request('/api/v1/node-enrollments', {}, signal))
+  if (!Array.isArray(value.enrollments)) {
+    throw new ApiError('API response field enrollments is invalid.', 502)
+  }
+  return value.enrollments.map(parseNodeEnrollment)
+}
+
+export async function createNodeEnrollment(role: NodeRole): Promise<NodeEnrollmentCommand> {
+  const value = requireRecord(await request('/api/v1/node-enrollments', {
+    method: 'POST',
+    body: JSON.stringify({ role }),
+  }))
+  return {
+    enrollment: parseNodeEnrollment(value.enrollment),
+    command: requireString(value.command, 'command'),
+  }
+}
+
+export async function revokeNodeEnrollment(id: string): Promise<NodeEnrollment> {
+  return parseNodeEnrollment(await request(`/api/v1/node-enrollments/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  }))
+}
+
+export function parseNodeEnrollmentEvent(input: unknown): NodeEnrollmentEvent {
+  const value = requireRecord(input)
+  return {
+    id: requireNumber(value.id, 'id'),
+    enrollmentId: requireString(value.enrollmentId, 'enrollmentId'),
+    status: requireString(value.status, 'status'),
+    message: requireString(value.message, 'message'),
+    createdAt: requireTimestamp(value.createdAt, 'createdAt'),
+  }
+}
+
+function parseSwarmNode(input: unknown): SwarmNode {
+  const value = requireRecord(input)
+  return {
+    id: requireString(value.id, 'id'),
+    hostname: requireString(value.hostname, 'hostname'),
+    role: requireNodeRole(value.role),
+    status: requireString(value.status, 'status'),
+    availability: requireString(value.availability, 'availability'),
+    managerStatus: optionalString(value.managerStatus),
+    address: requireString(value.address, 'address'),
+    managerAddress: optionalString(value.managerAddress),
+    operatingSystem: requireString(value.operatingSystem, 'operatingSystem'),
+    architecture: requireString(value.architecture, 'architecture'),
+    dockerVersion: requireString(value.dockerVersion, 'dockerVersion'),
+    desiredDockerVersion: requireString(value.desiredDockerVersion, 'desiredDockerVersion'),
+    versionDrift: requireBoolean(value.versionDrift, 'versionDrift'),
+  }
+}
+
+function parseNodeEnrollment(input: unknown): NodeEnrollment {
+  const value = requireRecord(input)
+  return {
+    id: requireString(value.id, 'id'),
+    requestedRole: requireNodeRole(value.requestedRole),
+    status: requireString(value.status, 'status'),
+    hostname: optionalString(value.hostname),
+    operatingSystem: optionalString(value.operatingSystem),
+    architecture: optionalString(value.architecture),
+    advertiseAddress: optionalString(value.advertiseAddress),
+    dataPathAddress: optionalString(value.dataPathAddress),
+    dockerVersion: optionalString(value.dockerVersion),
+    nodeId: optionalString(value.nodeId),
+    message: optionalString(value.message),
+    expiresAt: requireTimestamp(value.expiresAt, 'expiresAt'),
+    createdBy: requireNumber(value.createdBy, 'createdBy'),
+    createdAt: requireTimestamp(value.createdAt, 'createdAt'),
+    updatedAt: requireTimestamp(value.updatedAt, 'updatedAt'),
+  }
+}
+
+function requireNodeRole(input: unknown): NodeRole {
+  if (input !== 'worker' && input !== 'manager') {
+    throw new ApiError('API response field role is invalid.', 502)
+  }
+  return input
+}
+
+function requireTimestamp(input: unknown, field: string): string {
+  const value = requireString(input, field)
+  if (!Number.isFinite(Date.parse(value))) {
+    throw new ApiError(`API response field ${field} is invalid.`, 502)
+  }
+  return value
 }
 
 function parseUser(input: unknown): User {

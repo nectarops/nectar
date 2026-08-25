@@ -45,3 +45,19 @@ func (i *UnavailableInspector) ConfigureManagementAccess(
 ) error {
 	return errors.New(i.reason)
 }
+
+func (i *UnavailableInspector) ListNodes(context.Context) ([]domain.SwarmNode, error) {
+	return nil, errors.New(i.reason)
+}
+
+func (i *UnavailableInspector) WorkerJoinConfiguration(context.Context) (string, string, string, error) {
+	return "", "", "", errors.New(i.reason)
+}
+
+func (i *UnavailableInspector) Node(context.Context, string) (domain.SwarmNode, error) {
+	return domain.SwarmNode{}, errors.New(i.reason)
+}
+
+func (i *UnavailableInspector) PromoteNode(context.Context, string) (domain.SwarmNode, error) {
+	return domain.SwarmNode{}, errors.New(i.reason)
+}

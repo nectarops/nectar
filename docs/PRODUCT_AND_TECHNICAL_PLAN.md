@@ -15,7 +15,9 @@ It addresses five core needs:
 
 1. An operator can choose a Docker Engine version, install Docker on the first server, initialize Swarm, and deploy Nectar.
 2. Nectar provides a Web management interface, so routine work does not require handwritten Swarm commands.
-3. An operator can add Linux servers over SSH; Nectar checks the environment, installs the same Docker version, and joins each server to the Swarm.
+3. An Owner can generate a short-lived command in the Web UI and run it on a Linux server; the embedded
+   client checks the environment, installs the cluster Docker target only when Docker is absent, and
+   joins the server without giving Nectar an SSH credential.
 4. Nectar installs and manages Traefik, discovers routes from service labels, and obtains and renews HTTPS certificates.
 5. An operator can enter an image repository, image version, and deployment settings to create or upgrade a service while observing progress, health, and rollback options.
 
@@ -92,29 +94,25 @@ The current alpha creates the Owner account first over `IP:8080`. After login, t
 
 ### 2.3 Adding a Server
 
-The **Nodes → Add node** workflow collects:
-
-- Hostname or IP address, SSH port, and SSH user.
-- Authentication method, preferring private keys while supporting passwords for compatibility.
-- `sudo` method.
-- Worker or Manager role.
-- Advertise address and data-path address, with optional safe discovery.
-- Node labels such as `region=shanghai` and `disk=ssd`.
+The **Nodes → Add node** workflow collects the requested Worker or Manager role and returns a 30-minute
+command containing an opaque enrollment credential. The Owner runs the command as root on the target
+host. Optional environment variables override the safely discovered advertise address, data-path
+address, or trusted Docker repository mirror.
 
 The operation follows this sequence:
 
 ```text
-SSH connectivity check
-  → host-key fingerprint confirmation
-  → operating-system and port preflight
+short-lived credential creation
+  → first-machine identity binding
+  → operating-system, architecture, and network preflight
   → existing Docker and Swarm inspection
   → target-version availability check
-  → Docker installation or version alignment
-  → short-lived join-token retrieval
-  → Swarm join
+  → exact Docker installation only when absent
+  → Worker join-token retrieval in memory
+  → Swarm join as Worker
   → Manager-side Ready confirmation
-  → node-label update
-  → remote temporary-file and secret cleanup
+  → optional Manager-side promotion
+  → local temporary-file and secret cleanup
 ```
 
 Each step shows status, duration, and redacted logs. A failed operation resumes from a safe step instead of repeating all changes blindly.
@@ -164,7 +162,7 @@ flowchart LR
     U[Administrator browser] -->|HTTPS / REST / SSE| W[Nectar Web + API]
     W --> DB[(SQLite)]
     W -->|Docker Engine API| S[Swarm Manager]
-    W -->|SSH| N1[Worker / Manager node]
+    N1[Worker / Manager node] -->|HTTPS enrollment API| W
     W -->|Manifest lookup| R[Image registry]
     S --> T[Traefik service]
     S --> A[Application services / stacks]
@@ -179,7 +177,7 @@ flowchart LR
 - Frontend: React, TypeScript, Vite, shadcn/ui, and Tailwind CSS, embedded into the Go binary after production build.
 - Database: SQLite in WAL mode for the MVP, stored on a control-node volume.
 - Docker operations: Docker Engine Go SDK wherever structured APIs exist; controlled shell commands only during host installation.
-- SSH: Go SSH client with private-key, encrypted-key, and password support and mandatory known-hosts verification.
+- Node bootstrap: embedded, checksum-stable Bash client using short-lived bearer enrollment credentials.
 - Background work: database-backed durable queue with one worker instance; every mutation has an idempotency key.
 - Logging: structured logs with centralized redaction before sensitive fields reach the logger.
 
@@ -199,7 +197,7 @@ Control-plane HA requires an explicit design; increasing replicas from one to th
 - Migrate state from SQLite to PostgreSQL.
 - Elect a single scheduler using a database advisory lock or lease.
 - Allow multiple API replicas while protecting all mutations with optimistic locking and idempotency.
-- Move SSH credentials to an external secret manager or encryption-key service.
+- Move registry and application credentials to an external secret manager or encryption-key service.
 - Keep a single ACME writer until Traefik certificate storage is replaced with a distributed solution.
 
 ## 4. Core Modules
@@ -239,18 +237,24 @@ Version policy:
 - Upgrade nodes sequentially through drain → upgrade → verify → active while preserving Manager quorum.
 - Disable downgrades by default and require a separate dangerous-action confirmation and backup check.
 
-### 4.2 SSH Node Executor
+### 4.2 Command-Based Node Enrollment Client
 
 Responsibilities:
 
-- Show the host-key fingerprint on first connection and write it to known hosts only after confirmation.
-- Collect `/etc/os-release`, architecture, kernel, disk, memory, IP, time synchronization, and existing Docker state.
-- Upload checksum-verified temporary scripts or execute individually allowlisted commands.
-- Apply bounded timeouts, cancellation, and retry policy to every stage.
-- Stream redacted output while filtering passwords, private keys, registry tokens, and join tokens.
-- Delete remote temporary files after success or failure.
+- Serve `client.sh` from the same immutable Nectar binary that handles enrollment APIs.
+- Bind the stored SHA-256 credential hash to the first machine-ID hash that claims it.
+- Collect `/etc/os-release`, architecture, hostname, routable addresses, existing Docker state, and
+  existing Swarm identity locally.
+- Use bounded HTTP and package-repository timeouts and report durable, redacted progress to the Manager.
+- Preserve every healthy existing Docker Engine version; install the exact cluster target only when
+  Docker is absent.
+- Join with the Worker token even when Manager is requested. Verify and promote through the existing
+  Manager so a Manager token never reaches the candidate node.
+- Store secrets only in mode-0700 temporary storage and delete them on success or failure.
 
-SSH passwords should not be retained. Persisted private keys require envelope encryption with an instance master key supplied through a Docker secret, never stored in SQLite or the image.
+The credential is returned once to the Owner, expires after 30 minutes, is never stored in plaintext,
+and cannot be claimed from a second machine. HTTPS plus a private network or VPN is the supported
+transport boundary.
 
 ### 4.3 Swarm Manager
 
@@ -345,7 +349,7 @@ Security requirements:
 - Use a modern password hash with an appropriate cost.
 - Use HttpOnly, Secure, SameSite session cookies and CSRF protection on every mutation.
 - Provide login rate limiting, temporary lockout, and session revocation.
-- Encrypt registry passwords, SSH credentials, ACME keys, and application secrets or inject them externally.
+- Encrypt registry passwords, ACME keys, and application secrets or inject them externally.
 - Treat the Docker socket as root-equivalent and restrict it to the control service.
 - Write node, deployment, rollback, secret, and login actions to an audit log ordinary users cannot modify.
 
@@ -356,13 +360,13 @@ Security requirements:
 | Setup wizard | Owner, cluster address, registry, Traefik, health checks |
 | Overview | Node health, Manager quorum, service replicas, recent releases, certificate alerts |
 | Nodes | Role, status, availability, Docker version, resources, labels, actions |
-| Add node | SSH settings, fingerprint, preflight, installation, join progress |
+| Add node | Requested role, short-lived command, preflight, installation, join and promotion progress |
 | Applications | Current version, replica health, domain, latest release result |
 | Create/edit application | Image, version, port, resources, environment, secrets, domain, update policy |
 | Release details | Spec diff, timeline, logs, health verification, rollback |
 | Traefik/certificates | Entrypoints, domains, certificate state, expiry, challenge checks |
 | Cluster resources | Networks, configs, and secrets; secret values are never displayed |
-| System settings | Users, registries, SSH credentials, backup, audit, version policy |
+| System settings | Users, registries, enrollment policy, backup, audit, version policy |
 
 ## 6. Draft Data Model
 
@@ -371,9 +375,8 @@ Security requirements:
 | `users` | id, username, password_hash, role, disabled_at |
 | `sessions` | id, user_id, token_hash, expires_at, revoked_at |
 | `settings` | key, encrypted_value/value, updated_at |
-| `ssh_credentials` | id, name, kind, username, encrypted_secret, fingerprint |
-| `hosts` | id, address, ssh_port, os, arch, engine_version, swarm_node_id |
-| `node_operations` | id, host_id, type, status, current_step, error_code |
+| `node_enrollments` | id, token_hash, requested_role, machine_id_hash, status, expires_at, node_id |
+| `node_enrollment_events` | id, enrollment_id, status, redacted_message, created_at |
 | `applications` | id, name, slug, description |
 | `deployment_specs` | id, app_id, version, spec_json, created_by |
 | `releases` | id, app_id, spec_id, image_tag, image_digest, status, idempotency_key |
@@ -395,10 +398,13 @@ PUT    /api/v1/management-access
 GET    /api/v1/cluster
 GET    /api/v1/cluster/health
 GET    /api/v1/nodes
-POST   /api/v1/nodes/preflight
-POST   /api/v1/nodes
-GET    /api/v1/node-operations/{id}
-GET    /api/v1/node-operations/{id}/events
+GET    /api/v1/node-enrollments
+POST   /api/v1/node-enrollments
+DELETE /api/v1/node-enrollments/{id}
+GET    /api/v1/node-enrollments/{id}/events
+POST   /api/v1/node-enrollments/claim
+POST   /api/v1/node-enrollments/progress
+POST   /api/v1/node-enrollments/complete
 POST   /api/v1/nodes/{id}/drain
 POST   /api/v1/nodes/{id}/activate
 POST   /api/v1/nodes/{id}/upgrade
@@ -430,7 +436,7 @@ Preflight checks these paths before joining a node:
 
 | Direction | Port | Purpose |
 |---|---:|---|
-| Control plane to target | SSH port, 22/TCP by default | Installation and maintenance |
+| Target to Nectar | Management HTTPS port | Claim, policy, progress, and completion |
 | Between Swarm nodes | 2377/TCP | Manager control plane |
 | Between Swarm nodes | 7946/TCP + UDP | Discovery and communication |
 | Between Swarm nodes | 4789/UDP | Overlay data plane |
@@ -444,7 +450,7 @@ Security-group checks must go beyond local listening sockets and test both Manag
 
 ### 9.1 Node Enrollment Failure
 
-- SSH or fingerprint failure: make no remote changes.
+- Enrollment credential invalid, expired, revoked, or claimed by another machine: make no host changes.
 - Docker version unavailable: stop before installation and show distribution candidates.
 - Docker installed but join failed: retain Docker, remove temporary files, and allow a join-only retry.
 - Join succeeded but Manager does not report Ready: collect daemon, time, port, and certificate state; do not repeat join automatically.
@@ -469,7 +475,7 @@ MVP signals:
 - Node Ready/Down state, Manager reachability, and quorum risk.
 - Desired, running, and failed service replicas.
 - Deployment duration and success, failure, and rollback counts.
-- SSH operation duration and error classes.
+- Node enrollment duration, status transitions, and redacted error classes.
 - Certificate lifetime and latest renewal result.
 - Docker, Traefik, and Nectar version distribution.
 
@@ -497,15 +503,17 @@ Deliverables:
 
 Acceptance: a clean host can be installed from scratch and the browser correctly displays a single-Manager Swarm.
 
-### Phase 2: SSH Node Enrollment
+### Phase 2: Command-Based Node Enrollment
 
 Deliverables:
 
-- SSH credentials, known hosts, preflight, remote installation, join, and step logs.
-- Worker/Manager role, node labels, drain/activate/remove.
-- Docker version-consistency alerts and quorum protection.
+- Short-lived command creation, machine binding, local preflight, installation, join, and durable SSE
+  progress.
+- Worker/Manager role with Worker-first joining and Manager-side verified promotion.
+- Docker version-consistency alerts and Manager promotion protection.
 
-Acceptance: two clean hosts can be joined from the Web UI; failures are diagnosable and safely retryable with no sensitive log output.
+Acceptance: two clean hosts can be joined using commands generated by the Web UI; failures are
+diagnosable and safely retryable from the bound host with no sensitive log output.
 
 ### Phase 3: Traefik and Automatic HTTPS
 
@@ -541,10 +549,11 @@ Acceptance: complete exercises for Manager failure, node isolation, registry out
 ## 12. Test Strategy
 
 - Unit tests: version parsing, specification generation, state machines, quorum calculations, secret redaction, authorization.
-- Integration tests: Docker API, registry manifests, SQLite migrations, SSH executor.
+- Integration tests: Docker API, registry manifests, SQLite migrations, and enrollment state transitions.
 - End-to-end tests: a three-node isolated Linux Swarm covering install, join, Traefik, deploy, upgrade, rollback, and removal.
 - Idempotency tests: interrupt and resume every installation and deployment stage.
-- Security tests: changed host keys, command injection, CSRF, weak passwords, privilege escalation, and secret leakage.
+- Security tests: credential replay from another machine, command injection, CSRF, weak passwords,
+  privilege escalation, and secret leakage.
 - Compatibility tests: supported distributions, architectures, and Docker Engine versions.
 - Failure tests: Manager loss, quorum loss, Worker loss, registry timeout, and ACME outage.
 
@@ -553,11 +562,13 @@ Acceptance: complete exercises for Manager failure, node isolation, registry out
 The MVP is complete only when all of these conditions are satisfied:
 
 1. An operator can choose a Docker version and install the first Manager on a supported clean Linux host.
-2. An operator can add at least two nodes through Web + SSH; every node satisfies the Engine-version policy and reaches Ready.
+2. An Owner can add at least two nodes with Web-generated commands; each node reaches Ready and any
+   Engine-version drift remains visible.
 3. An operator can deploy an explicit image version with a domain, and Traefik obtains a valid certificate and serves HTTPS.
 4. An operator can upgrade an image, observe real-time progress, and trigger or receive rollback after failure.
 5. Quorum, ports, firewalls, DNS, images, and certificate failures have actionable diagnostics.
-6. SSH, registry, join-token, session, and application secrets never appear as plaintext in the database or logs.
+6. Enrollment, registry, join-token, session, and application secrets never appear as plaintext in the
+   database or logs.
 7. Installation, enrollment, and deployment operations are retryable and idempotent.
 8. Executable backup/restore documentation exists and at least one recovery exercise has succeeded.
 
@@ -566,7 +577,7 @@ The MVP is complete only when all of these conditions are satisfied:
 | Decision | Choice | Reason |
 |---|---|---|
 | Control plane | Go single binary + embedded SPA | Simple installation and low Manager-node overhead |
-| Node enrollment | Agentless SSH | No preinstalled agent; appropriate for small clusters |
+| Node enrollment | Short-lived command + embedded client | No stored SSH credential or preinstalled agent; target initiates the trusted connection |
 | Initial persistence | SQLite + one control replica | Lower MVP operational complexity |
 | Docker installation | Official repositories + package manager | Supports pinned versions and a secure update path |
 | Application orchestration | Swarm services/stacks | Matches the product and preserves the Compose mental model |
@@ -581,7 +592,8 @@ The MVP is complete only when all of these conditions are satisfied:
 These choices do not block the architecture, but each must be resolved before its implementation phase:
 
 1. Whether the first release supports Ubuntu only or Ubuntu and Debian.
-2. Whether SSH passwords may be persisted or are always single-use.
+2. Whether later node-maintenance automation should use an optional agent or explicit per-operation
+   commands; enrollment itself does not collect SSH credentials.
 3. Whether the simple form supports multi-service applications. The current recommendation is one service per application, with Stack YAML for advanced use.
 4. Whether the first private-registry implementation targets generic Registry V2 only or adds vendor-specific integrations.
 5. Whether existing Swarm services can be imported and managed. The recommendation is read-only discovery followed by explicit adoption.
@@ -589,7 +601,9 @@ These choices do not block the architecture, but each must be resolved before it
 ## 16. Implementation References
 
 - Docker's official repositories list installable package versions; installers should query candidates instead of maintaining an expiring hard-coded table.
-- Worker and Manager join tokens are sensitive and needed only during enrollment; read them on demand and never persist them.
+- Swarm join tokens are sensitive and needed only during enrollment; read the Worker token on demand,
+  never persist it, and promote verified Managers through the Engine API instead of distributing the
+  Manager token.
 - Swarm nodes normally require `2377/TCP`, `7946/TCP+UDP`, and `4789/UDP` between nodes.
 - Managers use Raft quorum, so production clusters normally use an odd number. Existing tasks may continue after quorum loss, but scheduling and management stop.
 - Traefik's Swarm provider reads service labels, and the backend container port must be explicit.

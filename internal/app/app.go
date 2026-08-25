@@ -56,6 +56,7 @@ func Run(
 	var clusterReader application.ClusterReader
 	var deploymentEngine application.DeploymentEngine
 	var accessConfigurator application.ManagementAccessConfigurator
+	var nodeCluster application.NodeCluster
 	var dockerReadiness api.Readiness
 	if inspectorErr != nil {
 		if cfg.RequireDocker {
@@ -66,6 +67,7 @@ func Run(
 		clusterReader = unavailable
 		deploymentEngine = unavailable
 		accessConfigurator = unavailable
+		nodeCluster = unavailable
 	} else {
 		defer func() {
 			if err := inspector.Close(); err != nil {
@@ -75,6 +77,7 @@ func Run(
 		clusterReader = inspector
 		deploymentEngine = inspector
 		accessConfigurator = inspector
+		nodeCluster = inspector
 		dockerReadiness = inspector
 	}
 
@@ -102,6 +105,14 @@ func Run(
 	if err != nil {
 		return err
 	}
+	nodeEnrollmentService, err := application.NewNodeEnrollmentService(
+		database,
+		nodeCluster,
+		database,
+	)
+	if err != nil {
+		return err
+	}
 
 	apiServer, err := api.NewServer(api.Options{
 		Logger:           logger,
@@ -109,6 +120,7 @@ func Run(
 		Cluster:          clusterService,
 		ManagementAccess: managementAccessService,
 		Deployments:      deploymentService,
+		NodeEnrollments:  nodeEnrollmentService,
 		Store:            database,
 		Docker:           dockerReadiness,
 		RequireDocker:    cfg.RequireDocker,

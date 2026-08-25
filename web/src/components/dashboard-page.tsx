@@ -22,6 +22,7 @@ import {
 
 import { DeployForm } from '@/components/deploy-form'
 import { ManagementAccessPage } from '@/components/management-access-page'
+import { NodesPage } from '@/components/nodes-page'
 import { PageFrame } from '@/components/page-frame'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -48,7 +49,7 @@ type DashboardPageProps = {
   onLoggedOut: () => void
 }
 
-type DashboardView = 'overview' | 'deploy' | 'access'
+type DashboardView = 'overview' | 'nodes' | 'deploy' | 'access'
 
 export function DashboardPage({ user, version, onLoggedOut }: DashboardPageProps) {
   const [activeView, setActiveView] = useState<DashboardView>('overview')
@@ -58,10 +59,12 @@ export function DashboardPage({ user, version, onLoggedOut }: DashboardPageProps
 
   useEffect(() => {
     const controller = new AbortController()
-    setError('')
 
     getCluster(controller.signal)
-      .then(setCluster)
+      .then((snapshot) => {
+        setCluster(snapshot)
+        setError('')
+      })
       .catch((loadError: unknown) => {
         if (!controller.signal.aborted) {
           setError(loadError instanceof Error ? loadError.message : 'Unable to inspect Docker Engine.')
@@ -100,6 +103,8 @@ export function DashboardPage({ user, version, onLoggedOut }: DashboardPageProps
               error={error}
               onRefresh={() => setRefreshKey((key) => key + 1)}
             />
+          ) : activeView === 'nodes' ? (
+            <NodesPage canManage={user.role === 'owner'} />
           ) : activeView === 'deploy' ? (
             <DeploymentPage
               cluster={cluster}
@@ -124,6 +129,7 @@ function DashboardNavigation({
 }) {
   const items: Array<{ id: DashboardView; label: string; icon: typeof LayoutDashboard }> = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+    { id: 'nodes', label: 'Nodes', icon: Server },
     { id: 'deploy', label: 'Deploy service', icon: Rocket },
     { id: 'access', label: 'HTTPS access', icon: Globe },
   ]
@@ -132,7 +138,7 @@ function DashboardNavigation({
     <aside className="lg:sticky lg:top-6 lg:self-start">
       <nav
         aria-label="Control plane"
-        className="grid grid-cols-3 gap-2 rounded-xl border bg-card p-2 shadow-sm lg:grid-cols-1"
+        className="grid grid-cols-2 gap-2 rounded-xl border bg-card p-2 shadow-sm sm:grid-cols-4 lg:grid-cols-1"
       >
         {items.map(({ id, label, icon: Icon }) => (
           <Button

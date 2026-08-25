@@ -15,6 +15,13 @@ All notable user-facing changes are documented here. This project follows Semant
 - Ubuntu/Debian installer with explicit Docker version safety checks.
 - Reproducible container build, API contract, tests, and open-source project files.
 - One-command local launcher with an isolated data directory and automatic browser opening.
+- Owner-controlled Worker and Manager enrollment from the Web UI using short-lived, machine-bound
+  commands, durable SSE progress, live Swarm node status, and Docker version-drift reporting.
+- An embedded `client.sh` that preserves healthy existing Docker installations, installs the exact
+  cluster target only when Docker is absent, joins as Worker, and delegates Manager promotion to the
+  existing control plane.
+- Release preparation commands that synchronize `install.sh` and README versions, run verification,
+  create an annotated tag, and block publishing when the tag version does not match the source.
 
 ### Fixed
 

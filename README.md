@@ -6,7 +6,10 @@ Nectar is a free, self-hosted Docker Swarm control plane for small and medium-si
 
 There is no hosted account, node-count license, telemetry requirement, or paid feature gate. The backend is Go; the embedded Web application is React, TypeScript, Vite, Tailwind CSS, and shadcn/ui.
 
-> **Project status:** early alpha. The install/setup/cluster-inspection/deployment vertical slice is implemented. Remote SSH node enrollment, durable background operation streams, registry credentials, and rollback controls remain on the roadmap. Do not treat this release as a mature production control plane yet.
+> **Project status:** early alpha. The install/setup/cluster-inspection, command-based node enrollment,
+> deployment, and HTTPS-access vertical slices are implemented. Registry credentials, node lifecycle
+> maintenance, and rollback controls remain on the roadmap. Do not treat this release as a mature
+> production control plane yet.
 
 ## What works today
 
@@ -40,21 +43,23 @@ Nectar must run on a Swarm Manager with access to `/var/run/docker.sock`. Docker
 
 ## Installation
 
-No public container image or GitHub release is assumed to exist until the repository publishes `v0.1.0`. For a published release, the intended one-line flow is:
+<!-- nectar-release-version: 0.1.3 -->
+
+No public container image or GitHub release is assumed to exist until the repository publishes `v0.1.3`. For a published release, the intended one-line flow is:
 
 ```bash
-curl -fsSL https://github.com/nectarops/nectar/releases/download/v0.1.0/install.sh \
+curl -fsSL https://github.com/nectarops/nectar/releases/download/v0.1.3/install.sh \
   | sudo bash -s -- \
       --docker-version 29.0.1 \
       --advertise-addr 192.0.2.10 \
-      --nectar-version 0.1.0
+      --nectar-version 0.1.3
 ```
 
 The safer inspect-and-verify flow is:
 
 ```bash
-curl -fLO https://github.com/nectarops/nectar/releases/download/v0.1.0/install.sh
-curl -fLO https://github.com/nectarops/nectar/releases/download/v0.1.0/SHA256SUMS
+curl -fLO https://github.com/nectarops/nectar/releases/download/v0.1.3/install.sh
+curl -fLO https://github.com/nectarops/nectar/releases/download/v0.1.3/SHA256SUMS
 sha256sum --check --ignore-missing SHA256SUMS
 less install.sh
 sudo bash install.sh --dry-run --advertise-addr 192.0.2.10
@@ -108,7 +113,7 @@ On the first visit, open the printed `http://<manager-ip>:<port>` URL and create
 To test an unpublished image, build and push it under a pinned tag, then set `NECTAR_IMAGE`:
 
 ```bash
-sudo NECTAR_IMAGE=registry.example.com/ops/nectar:0.1.0 \
+sudo NECTAR_IMAGE=registry.example.com/ops/nectar:0.1.3 \
   bash install.sh --advertise-addr 192.0.2.10
 ```
 
@@ -116,16 +121,31 @@ sudo NECTAR_IMAGE=registry.example.com/ops/nectar:0.1.0 \
 
 The first Manager's verified Docker Engine server version becomes the cluster-wide target. The overview page shows both the Manager's live version and the SQLite target and warns if they differ.
 
-Remote SSH node enrollment is not implemented in the current alpha. Its required version flow is:
+Sign in as the Owner and open **Nodes → Add a node**. Choose the final Worker or Manager role, generate
+the short-lived command, and run it as root on the target host. This avoids giving Nectar an SSH
+password or private key. Enrollment follows this version flow:
 
 1. Read `desired_docker_version` from the Manager's SQLite-backed cluster policy.
 2. Inspect the candidate node's distribution, architecture, and existing Docker Engine.
 3. If Docker is absent, verify that the official Docker repository provides the exact target Engine version, install its matching distribution package, and confirm the daemon reports the target version.
 4. If Docker is already installed, verify that its daemon is healthy, preserve the existing version, and continue even when it differs from the target.
 5. Record and display version drift instead of silently upgrading, downgrading, or blocking the existing installation.
-6. Retrieve a short-lived Swarm join token, join the node, verify it is Ready, and clear the token without storing or logging it.
+6. Bind the 30-minute enrollment credential to the first target machine that claims it. The database
+   stores only the credential hash.
+7. Retrieve the Worker join token only for the active request, join every new host as a Worker, and
+   never return a Manager join token to the target.
+8. Verify the Node ID, hostname, Ready state, and target Swarm from the existing Manager. If Manager was
+   requested, require the exact Docker target version and promote the verified Worker through the
+   Docker Engine API. A version mismatch leaves it joined as a Worker for review.
 
-Until the node-enrollment workflow lands, do not copy the Manager installer onto a Worker: `install.sh` initializes or preserves a Manager and deploys the Nectar control plane. When adding a Worker manually, install **Cluster Docker target** only if Docker is absent; preserve an existing healthy Docker installation.
+The generated command downloads the instance's embedded `client.sh`; it does not copy or run the
+Manager `install.sh`. Failed enrollment can be rerun on the same bound machine before expiry. Generate a
+new command after expiry or revocation.
+
+Use a private network or VPN. The target must reach the Nectar URL and Manager on `2377/TCP`; Swarm
+nodes also require `7946/TCP+UDP` and `4789/UDP` between one another. Never expose `4789/UDP` broadly
+to an untrusted public network. HTTPS is strongly recommended because the bootstrap response contains
+a Swarm Worker join credential in memory.
 
 ## Deploying an application
 
@@ -143,6 +163,23 @@ The **HTTPS access** page creates Traefik and the `traefik-public` network on de
 ## Local development
 
 Prerequisites are Go 1.26, Node.js 24, pnpm 11, and Docker for integration testing.
+
+### Preparing a release tag
+
+Do not create a release tag first and then edit its version: a Git tag points to an existing commit, so
+later edits cannot become part of that immutable tag. Use the repository-owned release commands instead:
+
+```bash
+# Update install.sh and every release/image version example in README.md for review.
+make prepare-release VERSION=0.1.4
+
+# Or, from a clean worktree, update, run make verify, commit, and create annotated tag v0.1.4.
+make release-tag VERSION=0.1.4
+```
+
+`release-tag` does not push. Review the generated commit and tag, then push the branch and tag explicitly.
+CI checks that `install.sh` and README agree, while the tag release workflow additionally requires the
+tag name to match them before publishing the image and installer assets.
 
 For a one-command local preview, run:
 
