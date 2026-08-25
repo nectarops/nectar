@@ -43,23 +43,23 @@ Nectar must run on a Swarm Manager with access to `/var/run/docker.sock`. Docker
 
 ## Installation
 
-<!-- nectar-release-version: 0.1.3 -->
+<!-- nectar-release-version: 0.1.4 -->
 
-No public container image or GitHub release is assumed to exist until the repository publishes `v0.1.3`. For a published release, the intended one-line flow is:
+No public container image or GitHub release is assumed to exist until the repository publishes `v0.1.4`. For a published release, the intended one-line flow is:
 
 ```bash
-curl -fsSL https://github.com/nectarops/nectar/releases/download/v0.1.3/install.sh \
+curl -fsSL https://github.com/nectarops/nectar/releases/download/v0.1.4/install.sh \
   | sudo bash -s -- \
       --docker-version 29.0.1 \
       --advertise-addr 192.0.2.10 \
-      --nectar-version 0.1.3
+      --nectar-version 0.1.4
 ```
 
 The safer inspect-and-verify flow is:
 
 ```bash
-curl -fLO https://github.com/nectarops/nectar/releases/download/v0.1.3/install.sh
-curl -fLO https://github.com/nectarops/nectar/releases/download/v0.1.3/SHA256SUMS
+curl -fLO https://github.com/nectarops/nectar/releases/download/v0.1.4/install.sh
+curl -fLO https://github.com/nectarops/nectar/releases/download/v0.1.4/SHA256SUMS
 sha256sum --check --ignore-missing SHA256SUMS
 less install.sh
 sudo bash install.sh --dry-run --advertise-addr 192.0.2.10
@@ -108,12 +108,19 @@ sudo env NECTAR_DOCKER_REPOSITORY_URL=https://mirrors.cloud.tencent.com/docker-c
 
 The installer then initializes Swarm when needed, deploys Nectar on the configured Web port, and prints the exact Web URL and one-time setup token after readiness succeeds. It does not create `traefik-public`, install Traefik, or occupy ports 80 and 443. The verified Docker Engine server version is stored in SQLite as `desired_docker_version`; rerunning the installer cannot silently replace that cluster policy. Delete the root-readable resume copy at `/var/lib/nectar/bootstrap-token` after setup. Docker logging defaults apply to containers created after the daemon restart; existing containers keep their original logging configuration.
 
+Rerunning the installer to upgrade Nectar preserves an existing HTTPS management route. Before deploying the
+updated image, it reads the validated management-domain label from `nectar_nectar` and carries the Traefik
+labels and `traefik-public` attachment into the replacement service specification. If that label exists but
+`traefik-public` is missing or is not a Swarm Overlay network, the installer stops before updating the service
+instead of silently replacing the route with an HTTP-only specification. The installer does not create a new
+Nectar service or delete the existing `nectar_data` volume during an upgrade.
+
 On the first visit, open the printed `http://<manager-ip>:<port>` URL and create the Owner account. After signing in, open **HTTPS access** in the sidebar, enter the management domain and Let's Encrypt email, and submit the form. Point the domain to this Manager and allow inbound TCP 80 and 443 first. Nectar then creates the ingress network, installs or reconciles one Traefik replica on the same labeled Manager as Nectar, publishes 80 and 443 in host mode only on that node, and attaches an HTTPS route to its own Swarm service. Until this form is submitted, Traefik remains uninstalled and those ports remain unused by Nectar. The IP-and-port URL remains available as a recovery path; sign in again when opening the domain because browser cookies are scoped to each host.
 
 To test an unpublished image, build and push it under a pinned tag, then set `NECTAR_IMAGE`:
 
 ```bash
-sudo NECTAR_IMAGE=registry.example.com/ops/nectar:0.1.3 \
+sudo NECTAR_IMAGE=registry.example.com/ops/nectar:0.1.4 \
   bash install.sh --advertise-addr 192.0.2.10
 ```
 
@@ -141,36 +148,6 @@ password or private key. Enrollment follows this version flow:
 The generated command downloads the instance's embedded `client.sh`; it does not copy or run the
 Manager `install.sh`. Failed enrollment can be rerun on the same bound machine before expiry. Generate a
 new command after expiry or revocation.
-
-### Removing Docker from a retired node
-
-The repository includes `internal/nodeclient/uninstall-docker.sh` for deliberately retiring Docker from a
-Linux node. It detects package-managed Docker installations across the `apt`, `dnf`, `yum`, `zypper`,
-`pacman`, and `apk` families and also detects the Docker snap. Always inspect a dry run first:
-
-```bash
-sudo bash internal/nodeclient/uninstall-docker.sh --dry-run --all
-sudo bash internal/nodeclient/uninstall-docker.sh --all
-```
-
-`--all` removes Docker packages, Docker's data root, `/var/lib/containerd`, daemon configuration, official
-Docker repository files, and recognized manually installed binaries under `/usr/local`. This permanently
-deletes local images, containers, named volumes, networks, Swarm state, configs, and secrets. It does not
-delete bind-mounted host directories or per-user rootless Docker data. Back up data before using it.
-The uninstaller ignores remote Docker contexts and `DOCKER_HOST`, and operates only through the local system
-socket at `/var/run/docker.sock`.
-
-The script refuses to purge `/var/lib/containerd` when it detects Kubernetes, k3s, or RKE2 state because
-those systems may share the runtime. Removing shared runtime data additionally requires
-`--force-shared-containerd`; prefer omitting the containerd purge instead. Without that override, the script
-also preserves an installed `containerd.io` package, its service, and recognized runtime binaries under
-`/usr/local` while still removing Docker Engine itself.
-
-The script makes an active Worker leave its Swarm before uninstalling. It refuses to remove Docker from a
-Swarm Manager unless `--force-swarm-manager` is also passed, because forcing a Manager to leave can destroy
-quorum and stop cluster workloads. Demote and remove a Manager through another healthy Manager whenever
-possible. `--yes` is available only for reviewed, non-interactive automation; it does not bypass the Swarm
-Manager safety guard.
 
 Use a private network or VPN. The target must reach the Nectar URL and Manager on `2377/TCP`; Swarm
 nodes also require `7946/TCP+UDP` and `4789/UDP` between one another. Never expose `4789/UDP` broadly

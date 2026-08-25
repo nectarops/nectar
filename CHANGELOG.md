@@ -20,13 +20,12 @@ All notable user-facing changes are documented here. This project follows Semant
 - An embedded `client.sh` that preserves healthy existing Docker installations, installs the exact
   cluster target only when Docker is absent, joins as Worker, and delegates Manager promotion to the
   existing control plane.
-- A guarded cross-distribution Docker uninstaller for retired nodes, with dry-run output, explicit data
-  purge controls, package-manager detection, and Swarm Manager quorum protection.
 - Release preparation commands that synchronize `install.sh` and README versions, run verification,
   create an annotated tag, and block publishing when the tag version does not match the source.
 
 ### Fixed
 
+- Preserve the configured HTTPS management route when the host installer updates the Nectar Swarm service.
 - Prevent Nectar Swarm tasks from being rejected on hosts whose existing Docker networks overlap Swarm's
   automatically allocated Overlay subnet.
 - Publish the Nectar Web port in host mode so an existing conflicting Swarm ingress network cannot reject the

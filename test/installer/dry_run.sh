@@ -12,6 +12,7 @@ installer="${repo_root}/install.sh"
 deploy_stack="${repo_root}/deploy/stack.yml"
 centos_8_fixture="${repo_root}/test/installer/testdata/centos-8-os-release"
 ip_overlap_fixture="${repo_root}/test/installer/testdata/ip-overlap"
+existing_service_docker_fixture="${repo_root}/test/installer/testdata/docker-existing-service"
 
 assert_contains() {
   local output=$1
@@ -19,6 +20,16 @@ assert_contains() {
 
   [[ "${output}" == *"${expected}"* ]] || {
     printf 'expected output to contain: %s\n\n%s\n' "${expected}" "${output}" >&2
+    exit 1
+  }
+}
+
+assert_not_contains() {
+  local output=$1
+  local unexpected=$2
+
+  [[ "${output}" != *"${unexpected}"* ]] || {
+    printf 'expected output not to contain: %s\n\n%s\n' "${unexpected}" "${output}" >&2
     exit 1
   }
 }
@@ -46,6 +57,17 @@ command -v docker >/dev/null 2>&1 || {
   printf 'docker is required for installer distribution tests\n' >&2
   exit 1
 }
+
+installer_content=$(<"${installer}")
+# These assertions intentionally match unexpanded template expressions in install.sh.
+# shellcheck disable=SC2016
+assert_contains "${installer_content}" \
+  'traefik.http.routers.nectar.rule: "Host(\`${preserved_management_domain}\`)"'
+assert_contains "${installer_content}" \
+  'traefik.http.services.nectar.loadbalancer.server.port: "8080"'
+# shellcheck disable=SC2016
+assert_contains "${installer_content}" 'traefik.swarm.network: "${MANAGEMENT_NETWORK_NAME}"'
+assert_contains "${installer_content}" $'  ${MANAGEMENT_NETWORK_NAME}:\n    external: true'
 
 deploy_stack_content=$(<"${deploy_stack}")
 assert_contains "${deploy_stack_content}" "mode: host"
@@ -104,5 +126,39 @@ if unsupported_output=$(docker run --rm \
   exit 1
 fi
 assert_contains "${unsupported_output}" "supported CentOS releases are CentOS Stream 9 and 10"
+
+configured_upgrade_output=$(docker run --rm \
+  --env FAKE_SERVICE_EXISTS=true \
+  --env FAKE_MANAGEMENT_DOMAIN=nectar.example.com \
+  --volume "${installer}:/install.sh:ro" \
+  --volume "${existing_service_docker_fixture}:/usr/local/bin/docker:ro" \
+  "${CENTOS_STREAM_9_IMAGE}" \
+  bash /install.sh --dry-run --advertise-addr 192.0.2.10 2>&1)
+assert_contains "${configured_upgrade_output}" \
+  "Preserving HTTPS management route for nectar.example.com during the service update."
+
+unconfigured_upgrade_output=$(docker run --rm \
+  --env FAKE_SERVICE_EXISTS=true \
+  --volume "${installer}:/install.sh:ro" \
+  --volume "${existing_service_docker_fixture}:/usr/local/bin/docker:ro" \
+  "${CENTOS_STREAM_9_IMAGE}" \
+  bash /install.sh --dry-run --advertise-addr 192.0.2.10 2>&1)
+assert_not_contains "${unconfigured_upgrade_output}" "Preserving HTTPS management route"
+
+if invalid_management_network_output=$(docker run --rm \
+  --env FAKE_SERVICE_EXISTS=true \
+  --env FAKE_MANAGEMENT_DOMAIN=nectar.example.com \
+  --env FAKE_MANAGEMENT_NETWORK_DRIVER=bridge \
+  --env FAKE_MANAGEMENT_NETWORK_SCOPE=local \
+  --volume "${installer}:/install.sh:ro" \
+  --volume "${existing_service_docker_fixture}:/usr/local/bin/docker:ro" \
+  "${CENTOS_STREAM_9_IMAGE}" \
+  bash /install.sh --dry-run --advertise-addr 192.0.2.10 2>&1); then
+  printf 'expected invalid management network state to fail\n%s\n' \
+    "${invalid_management_network_output}" >&2
+  exit 1
+fi
+assert_contains "${invalid_management_network_output}" \
+  "traefik-public is not a Swarm overlay network"
 
 printf 'installer distribution dry-run tests passed\n'

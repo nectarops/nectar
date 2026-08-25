@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
+
+set -Eeuo pipefail
+
+command_name=${1:-}
+subcommand=${2:-}
+
+case "${command_name}:${subcommand}" in
+  version:--format)
+    printf '%s\n' "${FAKE_DOCKER_VERSION:-29.0.1}"
+    ;;
+  info:*) ;;
+  network:ls) ;;
+  network:inspect)
+    format=""
+    while (($# > 0)); do
+      case "$1" in
+        --format)
+          format=$2
+          shift 2
+          ;;
+        *) shift ;;
+      esac
+    done
+    case "${format}" in
+      *Driver*) printf '%s\n' "${FAKE_MANAGEMENT_NETWORK_DRIVER:-overlay}" ;;
+      *Scope*) printf '%s\n' "${FAKE_MANAGEMENT_NETWORK_SCOPE:-swarm}" ;;
+    esac
+    ;;
+  service:inspect)
+    [[ "${FAKE_SERVICE_EXISTS:-false}" == true ]] || exit 1
+    format=""
+    while (($# > 0)); do
+      case "$1" in
+        --format)
+          format=$2
+          shift 2
+          ;;
+        *) shift ;;
+      esac
+    done
+    case "${format}" in
+      *ContainerSpec.Env*)
+        printf 'NECTAR_DESIRED_DOCKER_VERSION=%s\n' "${FAKE_DOCKER_VERSION:-29.0.1}"
+        ;;
+      *management-domain*)
+        printf '%s\n' "${FAKE_MANAGEMENT_DOMAIN:-}"
+        ;;
+    esac
+    ;;
+  *)
+    printf 'unexpected fake Docker command:' >&2
+    printf ' %q' "$@" >&2
+    printf '\n' >&2
+    exit 1
+    ;;
+esac

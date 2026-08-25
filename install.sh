@@ -8,13 +8,14 @@ readonly PROGRAM="nectar-installer"
 readonly DOCKER_DEB_KEY_FINGERPRINT="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
 readonly DOCKER_RPM_KEY_FINGERPRINT="060A61C51B558A7F742B77AAC52FEB6B621E9F35"
 readonly DEFAULT_DOCKER_REPOSITORY_URL="https://download.docker.com/linux"
-readonly DEFAULT_NECTAR_VERSION="0.1.3"
+readonly DEFAULT_NECTAR_VERSION="0.1.4"
 readonly DEFAULT_WEB_PORT="8080"
 readonly INSTALL_DIR="/opt/nectar"
 readonly DATA_DIR="/var/lib/nectar"
 readonly STACK_NAME="nectar"
 readonly SECRET_NAME="nectar_init_token"
 readonly NETWORK_NAME="nectar_control"
+readonly MANAGEMENT_NETWORK_NAME="traefik-public"
 readonly WEB_PUBLISH_MODE="host"
 readonly DAEMON_CONFIG="/etc/docker/daemon.json"
 
@@ -79,6 +80,13 @@ run() {
     return 0
   fi
   "$@"
+}
+
+valid_management_domain() {
+  local domain=$1
+
+  ((${#domain} <= 253)) || return 1
+  [[ "${domain}" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]]
 }
 
 ipv4_to_integer() {
@@ -752,7 +760,9 @@ ensure_nectar_network
 log "Nectar Web port ${web_port} will be published in ${WEB_PUBLISH_MODE} mode on the labeled Manager."
 
 service_exists=false
-if [[ "${dry_run}" != true ]] && docker service inspect "${STACK_NAME}_nectar" >/dev/null 2>&1; then
+preserved_management_domain=""
+if command -v docker >/dev/null 2>&1 &&
+  docker service inspect "${STACK_NAME}_nectar" >/dev/null 2>&1; then
   service_exists=true
 fi
 if [[ "${service_exists}" == true ]]; then
@@ -760,8 +770,28 @@ if [[ "${service_exists}" == true ]]; then
     docker service inspect --format '{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{println .}}{{end}}' "${STACK_NAME}_nectar" |
       awk -F= '$1 == "NECTAR_DESIRED_DOCKER_VERSION" {print substr($0, index($0, "=") + 1); exit}'
   )
-  if [[ -n "${recorded_service_version}" && "${recorded_service_version}" != "${actual_docker}" ]]; then
-    die "Docker ${actual_docker} is running, but Nectar records ${recorded_service_version} as the cluster target; use a controlled cluster Docker upgrade instead of overwriting the policy"
+  running_docker_version=${actual_docker:-${installed_docker}}
+  if [[ -n "${recorded_service_version}" && "${recorded_service_version}" != "${running_docker_version}" ]]; then
+    die "Docker ${running_docker_version} is running, but Nectar records ${recorded_service_version} as the cluster target; use a controlled cluster Docker upgrade instead of overwriting the policy"
+  fi
+
+  preserved_management_domain=$(docker service inspect \
+    --format '{{index .Spec.Labels "io.nectar.management-domain"}}' \
+    "${STACK_NAME}_nectar")
+  if [[ -n "${preserved_management_domain}" ]]; then
+    valid_management_domain "${preserved_management_domain}" ||
+      die "the installed Nectar service has an invalid management-domain label; refusing to copy it into the upgraded stack"
+
+    management_network_driver=$(docker network inspect \
+      --format '{{.Driver}}' \
+      "${MANAGEMENT_NETWORK_NAME}" 2>/dev/null || true)
+    management_network_scope=$(docker network inspect \
+      --format '{{.Scope}}' \
+      "${MANAGEMENT_NETWORK_NAME}" 2>/dev/null || true)
+    [[ "${management_network_driver}" == "overlay" && "${management_network_scope}" == "swarm" ]] ||
+      die "the installed Nectar service has HTTPS access configured, but ${MANAGEMENT_NETWORK_NAME} is not a Swarm overlay network; repair HTTPS access before upgrading"
+
+    log "Preserving HTTPS management route for ${preserved_management_domain} during the service update."
   fi
 fi
 if [[ "${service_exists}" != true ]] && command -v ss >/dev/null 2>&1 &&
@@ -789,10 +819,8 @@ elif [[ "${dry_run}" == true ]]; then
 fi
 
 stack_file="${INSTALL_DIR}/stack.yml"
-if [[ "${dry_run}" == true ]]; then
-  log "Would write the pinned Swarm stack to ${stack_file}."
-else
-  cat >"${stack_file}" <<EOF
+write_stack() {
+  cat <<EOF
 version: "3.9"
 services:
   nectar:
@@ -815,11 +843,32 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - ${NETWORK_NAME}
+EOF
+  if [[ -n "${preserved_management_domain}" ]]; then
+    cat <<EOF
+      - ${MANAGEMENT_NETWORK_NAME}
+EOF
+  fi
+  cat <<EOF
     secrets:
       - ${SECRET_NAME}
     deploy:
       labels:
         io.nectar.managed: "true"
+EOF
+  if [[ -n "${preserved_management_domain}" ]]; then
+    cat <<EOF
+        io.nectar.management-domain: "${preserved_management_domain}"
+        traefik.enable: "true"
+        traefik.swarm.network: "${MANAGEMENT_NETWORK_NAME}"
+        traefik.http.routers.nectar.rule: "Host(\`${preserved_management_domain}\`)"
+        traefik.http.routers.nectar.entrypoints: "websecure"
+        traefik.http.routers.nectar.tls: "true"
+        traefik.http.routers.nectar.tls.certresolver: "letsencrypt"
+        traefik.http.services.nectar.loadbalancer.server.port: "8080"
+EOF
+  fi
+  cat <<EOF
       replicas: 1
       placement:
         constraints:
@@ -836,12 +885,26 @@ services:
 networks:
   ${NETWORK_NAME}:
     external: true
+EOF
+  if [[ -n "${preserved_management_domain}" ]]; then
+    cat <<EOF
+  ${MANAGEMENT_NETWORK_NAME}:
+    external: true
+EOF
+  fi
+  cat <<EOF
 volumes:
   nectar_data:
 secrets:
   ${SECRET_NAME}:
     external: true
 EOF
+}
+
+if [[ "${dry_run}" == true ]]; then
+  log "Would write the pinned Swarm stack to ${stack_file}."
+else
+  write_stack >"${stack_file}"
   chmod 0644 "${stack_file}"
 fi
 
