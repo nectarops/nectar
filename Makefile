@@ -4,7 +4,7 @@ SHFMT_IMAGE := mvdan/shfmt@sha256:307d265ffd25ce832899ae17c93ed5062fc3375c514bba
 
 .DEFAULT_GOAL := help
 
-.PHONY: help dev install-web prepare-release release-tag version-check format format-check lint typecheck test test-installer test-release test-race build build-web build-go verify clean
+.PHONY: help dev install-web prepare-release release-tag version-check format format-check lint typecheck test test-installer test-nodeclient test-release test-race build build-web build-go verify clean
 
 help:
 	@printf '%s\n' 'Nectar development targets:'
@@ -14,6 +14,7 @@ help:
 	@printf '%s\n' '  make release-tag VERSION=0.1.4  Verify, commit, and create an annotated tag'
 	@printf '%s\n' '  make format       Format Go and installer Shell source'
 	@printf '%s\n' '  make test-installer  Test installer distribution detection in containers'
+	@printf '%s\n' '  make test-nodeclient  Test node enrollment and Docker uninstall scripts'
 	@printf '%s\n' '  make verify       Run formatting, lint, tests, and builds'
 
 dev:
@@ -37,30 +38,37 @@ format:
 	gofmt -w cmd internal
 	docker run --rm -v "$(CURDIR):/mnt" $(SHFMT_IMAGE) \
 		-w -i 2 -ci /mnt/install.sh /mnt/internal/nodeclient/client.sh \
+		/mnt/internal/nodeclient/uninstall-docker.sh \
 		/mnt/scripts/create-release-tag.sh /mnt/scripts/set-version.sh \
 		/mnt/test/installer/dry_run.sh \
-		/mnt/test/installer/testdata/ip-overlap /mnt/test/release/version.sh
+		/mnt/test/installer/testdata/ip-overlap /mnt/test/nodeclient/uninstall.sh \
+		/mnt/test/release/version.sh
 
 format-check:
 	@test -z "$$(gofmt -l cmd internal)"
 	docker run --rm -v "$(CURDIR):/mnt:ro" $(SHFMT_IMAGE) \
 		-d -i 2 -ci /mnt/install.sh /mnt/internal/nodeclient/client.sh \
+		/mnt/internal/nodeclient/uninstall-docker.sh \
 		/mnt/scripts/create-release-tag.sh /mnt/scripts/set-version.sh \
 		/mnt/test/installer/dry_run.sh \
-		/mnt/test/installer/testdata/ip-overlap /mnt/test/release/version.sh
+		/mnt/test/installer/testdata/ip-overlap /mnt/test/nodeclient/uninstall.sh \
+		/mnt/test/release/version.sh
 
 lint:
 	./scripts/set-version.sh --check
 	go vet ./...
 	npm --prefix web run lint
-	bash -n install.sh internal/nodeclient/client.sh
+	bash -n install.sh internal/nodeclient/client.sh internal/nodeclient/uninstall-docker.sh \
+		test/nodeclient/uninstall.sh
 	sh -n scripts/create-release-tag.sh scripts/dev.sh scripts/set-version.sh \
 		scripts/sync-web-assets.sh test/release/version.sh
 	docker run --rm -v "$(CURDIR):/mnt:ro" $(SHELLCHECK_IMAGE) \
 		shellcheck -x /mnt/install.sh /mnt/internal/nodeclient/client.sh \
+		/mnt/internal/nodeclient/uninstall-docker.sh \
 		/mnt/scripts/create-release-tag.sh /mnt/scripts/set-version.sh \
 		/mnt/test/installer/dry_run.sh \
-		/mnt/test/installer/testdata/ip-overlap /mnt/test/release/version.sh
+		/mnt/test/installer/testdata/ip-overlap /mnt/test/nodeclient/uninstall.sh \
+		/mnt/test/release/version.sh
 
 typecheck:
 	npm --prefix web run typecheck
@@ -69,10 +77,14 @@ test:
 	go test ./...
 	npm --prefix web run test
 	./test/installer/dry_run.sh
+	./test/nodeclient/uninstall.sh
 	./test/release/version.sh
 
 test-installer:
 	./test/installer/dry_run.sh
+
+test-nodeclient:
+	./test/nodeclient/uninstall.sh
 
 test-release:
 	./test/release/version.sh
