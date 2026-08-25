@@ -41,6 +41,7 @@ format:
 		/mnt/internal/nodeclient/uninstall-docker.sh \
 		/mnt/scripts/create-release-tag.sh /mnt/scripts/set-version.sh \
 		/mnt/test/installer/dry_run.sh \
+		/mnt/test/installer/testdata/docker-existing-service \
 		/mnt/test/installer/testdata/ip-overlap /mnt/test/nodeclient/uninstall.sh \
 		/mnt/test/release/version.sh
 
@@ -51,6 +52,7 @@ format-check:
 		/mnt/internal/nodeclient/uninstall-docker.sh \
 		/mnt/scripts/create-release-tag.sh /mnt/scripts/set-version.sh \
 		/mnt/test/installer/dry_run.sh \
+		/mnt/test/installer/testdata/docker-existing-service \
 		/mnt/test/installer/testdata/ip-overlap /mnt/test/nodeclient/uninstall.sh \
 		/mnt/test/release/version.sh
 
@@ -59,7 +61,7 @@ lint:
 	go vet ./...
 	npm --prefix web run lint
 	bash -n install.sh internal/nodeclient/client.sh internal/nodeclient/uninstall-docker.sh \
-		test/nodeclient/uninstall.sh
+		test/installer/testdata/docker-existing-service test/nodeclient/uninstall.sh
 	sh -n scripts/create-release-tag.sh scripts/dev.sh scripts/set-version.sh \
 		scripts/sync-web-assets.sh test/release/version.sh
 	docker run --rm -v "$(CURDIR):/mnt:ro" $(SHELLCHECK_IMAGE) \
@@ -67,6 +69,7 @@ lint:
 		/mnt/internal/nodeclient/uninstall-docker.sh \
 		/mnt/scripts/create-release-tag.sh /mnt/scripts/set-version.sh \
 		/mnt/test/installer/dry_run.sh \
+		/mnt/test/installer/testdata/docker-existing-service \
 		/mnt/test/installer/testdata/ip-overlap /mnt/test/nodeclient/uninstall.sh \
 		/mnt/test/release/version.sh
 

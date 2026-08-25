@@ -108,6 +108,13 @@ sudo env NECTAR_DOCKER_REPOSITORY_URL=https://mirrors.cloud.tencent.com/docker-c
 
 The installer then initializes Swarm when needed, deploys Nectar on the configured Web port, and prints the exact Web URL and one-time setup token after readiness succeeds. It does not create `traefik-public`, install Traefik, or occupy ports 80 and 443. The verified Docker Engine server version is stored in SQLite as `desired_docker_version`; rerunning the installer cannot silently replace that cluster policy. Delete the root-readable resume copy at `/var/lib/nectar/bootstrap-token` after setup. Docker logging defaults apply to containers created after the daemon restart; existing containers keep their original logging configuration.
 
+Rerunning the installer to upgrade Nectar preserves an existing HTTPS management route. Before deploying the
+updated image, it reads the validated management-domain label from `nectar_nectar` and carries the Traefik
+labels and `traefik-public` attachment into the replacement service specification. If that label exists but
+`traefik-public` is missing or is not a Swarm Overlay network, the installer stops before updating the service
+instead of silently replacing the route with an HTTP-only specification. The installer does not create a new
+Nectar service or delete the existing `nectar_data` volume during an upgrade.
+
 On the first visit, open the printed `http://<manager-ip>:<port>` URL and create the Owner account. After signing in, open **HTTPS access** in the sidebar, enter the management domain and Let's Encrypt email, and submit the form. Point the domain to this Manager and allow inbound TCP 80 and 443 first. Nectar then creates the ingress network, installs or reconciles one Traefik replica on the same labeled Manager as Nectar, publishes 80 and 443 in host mode only on that node, and attaches an HTTPS route to its own Swarm service. Until this form is submitted, Traefik remains uninstalled and those ports remain unused by Nectar. The IP-and-port URL remains available as a recovery path; sign in again when opening the domain because browser cookies are scoped to each host.
 
 To test an unpublished image, build and push it under a pinned tag, then set `NECTAR_IMAGE`:
