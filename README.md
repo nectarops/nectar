@@ -149,43 +149,6 @@ The generated command downloads the instance's embedded `client.sh`; it does not
 Manager `install.sh`. Failed enrollment can be rerun on the same bound machine before expiry. Generate a
 new command after expiry or revocation.
 
-### Removing Docker from a retired node
-
-The repository includes `internal/nodeclient/uninstall-docker.sh` for deliberately retiring Docker from a
-Linux node. It detects package-managed Docker installations across the `apt`, `dnf`, `yum`, `zypper`,
-`pacman`, and `apk` families and also detects the Docker snap. Always inspect a dry run first:
-
-```bash
-sudo bash internal/nodeclient/uninstall-docker.sh --dry-run --all
-sudo bash internal/nodeclient/uninstall-docker.sh --all
-```
-
-`--all` removes Docker packages, Docker's data root, `/var/lib/containerd`, daemon configuration, official
-Docker repository files, and recognized manually installed binaries under `/usr/local`. This permanently
-deletes local images, containers, named volumes, networks, Swarm state, configs, and secrets. It does not
-delete bind-mounted host directories or per-user rootless Docker data. Back up data before using it.
-The uninstaller ignores remote Docker contexts and `DOCKER_HOST`, and operates only through the local system
-socket at `/var/run/docker.sock`.
-
-On `apt` systems, the uninstaller recognizes installed Docker packages even when `apt-mark hold` was applied
-by the Nectar installer. Before it leaves Swarm or stops Docker, it simulates the complete package-removal
-transaction so a dependency conflict cannot leave the host half-uninstalled. The real purge removes the held
-Engine, CLI, plugins, and `containerd.io` packages in the same transaction without requiring a separate
-`apt-mark unhold` command. A final verification returns a failure if a known Docker package or Docker daemon
-binary remains, making the same command safe to inspect and rerun after an interruption.
-
-The script refuses to purge `/var/lib/containerd` when it detects Kubernetes, k3s, or RKE2 state because
-those systems may share the runtime. Removing shared runtime data additionally requires
-`--force-shared-containerd`; prefer omitting the containerd purge instead. Without that override, the script
-also preserves an installed `containerd.io` package, its service, and recognized runtime binaries under
-`/usr/local` while still removing Docker Engine itself.
-
-The script makes an active Worker leave its Swarm before uninstalling. It refuses to remove Docker from a
-Swarm Manager unless `--force-swarm-manager` is also passed, because forcing a Manager to leave can destroy
-quorum and stop cluster workloads. Demote and remove a Manager through another healthy Manager whenever
-possible. `--yes` is available only for reviewed, non-interactive automation; it does not bypass the Swarm
-Manager safety guard.
-
 Use a private network or VPN. The target must reach the Nectar URL and Manager on `2377/TCP`; Swarm
 nodes also require `7946/TCP+UDP` and `4789/UDP` between one another. Never expose `4789/UDP` broadly
 to an untrusted public network. HTTPS is strongly recommended because the bootstrap response contains
