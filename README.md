@@ -43,21 +43,23 @@ Nectar must run on a Swarm Manager with access to `/var/run/docker.sock`. Docker
 
 ## Installation
 
-No public container image or GitHub release is assumed to exist until the repository publishes `v0.1.0`. For a published release, the intended one-line flow is:
+<!-- nectar-release-version: 0.1.3 -->
+
+No public container image or GitHub release is assumed to exist until the repository publishes `v0.1.3`. For a published release, the intended one-line flow is:
 
 ```bash
-curl -fsSL https://github.com/nectarops/nectar/releases/download/v0.1.0/install.sh \
+curl -fsSL https://github.com/nectarops/nectar/releases/download/v0.1.3/install.sh \
   | sudo bash -s -- \
       --docker-version 29.0.1 \
       --advertise-addr 192.0.2.10 \
-      --nectar-version 0.1.0
+      --nectar-version 0.1.3
 ```
 
 The safer inspect-and-verify flow is:
 
 ```bash
-curl -fLO https://github.com/nectarops/nectar/releases/download/v0.1.0/install.sh
-curl -fLO https://github.com/nectarops/nectar/releases/download/v0.1.0/SHA256SUMS
+curl -fLO https://github.com/nectarops/nectar/releases/download/v0.1.3/install.sh
+curl -fLO https://github.com/nectarops/nectar/releases/download/v0.1.3/SHA256SUMS
 sha256sum --check --ignore-missing SHA256SUMS
 less install.sh
 sudo bash install.sh --dry-run --advertise-addr 192.0.2.10
@@ -111,7 +113,7 @@ On the first visit, open the printed `http://<manager-ip>:<port>` URL and create
 To test an unpublished image, build and push it under a pinned tag, then set `NECTAR_IMAGE`:
 
 ```bash
-sudo NECTAR_IMAGE=registry.example.com/ops/nectar:0.1.0 \
+sudo NECTAR_IMAGE=registry.example.com/ops/nectar:0.1.3 \
   bash install.sh --advertise-addr 192.0.2.10
 ```
 
@@ -161,6 +163,23 @@ The **HTTPS access** page creates Traefik and the `traefik-public` network on de
 ## Local development
 
 Prerequisites are Go 1.26, Node.js 24, pnpm 11, and Docker for integration testing.
+
+### Preparing a release tag
+
+Do not create a release tag first and then edit its version: a Git tag points to an existing commit, so
+later edits cannot become part of that immutable tag. Use the repository-owned release commands instead:
+
+```bash
+# Update install.sh and every release/image version example in README.md for review.
+make prepare-release VERSION=0.1.4
+
+# Or, from a clean worktree, update, run make verify, commit, and create annotated tag v0.1.4.
+make release-tag VERSION=0.1.4
+```
+
+`release-tag` does not push. Review the generated commit and tag, then push the branch and tag explicitly.
+CI checks that `install.sh` and README agree, while the tag release workflow additionally requires the
+tag name to match them before publishing the image and installer assets.
 
 For a one-command local preview, run:
 

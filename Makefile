@@ -4,12 +4,14 @@ SHFMT_IMAGE := mvdan/shfmt@sha256:307d265ffd25ce832899ae17c93ed5062fc3375c514bba
 
 .DEFAULT_GOAL := help
 
-.PHONY: help dev install-web format format-check lint typecheck test test-installer test-race build build-web build-go verify clean
+.PHONY: help dev install-web prepare-release release-tag version-check format format-check lint typecheck test test-installer test-release test-race build build-web build-go verify clean
 
 help:
 	@printf '%s\n' 'Nectar development targets:'
 	@printf '%s\n' '  make dev          Build and start the local web application'
 	@printf '%s\n' '  make install-web  Install pinned frontend dependencies'
+	@printf '%s\n' '  make prepare-release VERSION=0.1.4  Update release versions for review'
+	@printf '%s\n' '  make release-tag VERSION=0.1.4  Verify, commit, and create an annotated tag'
 	@printf '%s\n' '  make format       Format Go and installer Shell source'
 	@printf '%s\n' '  make test-installer  Test installer distribution detection in containers'
 	@printf '%s\n' '  make verify       Run formatting, lint, tests, and builds'
@@ -20,26 +22,45 @@ dev:
 install-web:
 	pnpm --dir web install --frozen-lockfile
 
+prepare-release:
+	@test -n "$(VERSION)" || { printf '%s\n' 'VERSION is required, for example VERSION=0.1.4' >&2; exit 2; }
+	./scripts/set-version.sh "$(VERSION)"
+
+release-tag:
+	@test -n "$(VERSION)" || { printf '%s\n' 'VERSION is required, for example VERSION=0.1.4' >&2; exit 2; }
+	./scripts/create-release-tag.sh "$(VERSION)"
+
+version-check:
+	./scripts/set-version.sh --check
+
 format:
 	gofmt -w cmd internal
 	docker run --rm -v "$(CURDIR):/mnt" $(SHFMT_IMAGE) \
-		-w -i 2 -ci /mnt/install.sh /mnt/test/installer/dry_run.sh \
-		/mnt/test/installer/testdata/ip-overlap
+		-w -i 2 -ci /mnt/install.sh /mnt/internal/nodeclient/client.sh \
+		/mnt/scripts/create-release-tag.sh /mnt/scripts/set-version.sh \
+		/mnt/test/installer/dry_run.sh \
+		/mnt/test/installer/testdata/ip-overlap /mnt/test/release/version.sh
 
 format-check:
 	@test -z "$$(gofmt -l cmd internal)"
 	docker run --rm -v "$(CURDIR):/mnt:ro" $(SHFMT_IMAGE) \
-		-d -i 2 -ci /mnt/install.sh /mnt/test/installer/dry_run.sh \
-		/mnt/test/installer/testdata/ip-overlap
+		-d -i 2 -ci /mnt/install.sh /mnt/internal/nodeclient/client.sh \
+		/mnt/scripts/create-release-tag.sh /mnt/scripts/set-version.sh \
+		/mnt/test/installer/dry_run.sh \
+		/mnt/test/installer/testdata/ip-overlap /mnt/test/release/version.sh
 
 lint:
+	./scripts/set-version.sh --check
 	go vet ./...
 	npm --prefix web run lint
-	bash -n install.sh
-	sh -n scripts/dev.sh scripts/sync-web-assets.sh
+	bash -n install.sh internal/nodeclient/client.sh
+	sh -n scripts/create-release-tag.sh scripts/dev.sh scripts/set-version.sh \
+		scripts/sync-web-assets.sh test/release/version.sh
 	docker run --rm -v "$(CURDIR):/mnt:ro" $(SHELLCHECK_IMAGE) \
-		shellcheck -x /mnt/install.sh /mnt/test/installer/dry_run.sh \
-		/mnt/test/installer/testdata/ip-overlap
+		shellcheck -x /mnt/install.sh /mnt/internal/nodeclient/client.sh \
+		/mnt/scripts/create-release-tag.sh /mnt/scripts/set-version.sh \
+		/mnt/test/installer/dry_run.sh \
+		/mnt/test/installer/testdata/ip-overlap /mnt/test/release/version.sh
 
 typecheck:
 	npm --prefix web run typecheck
@@ -48,9 +69,13 @@ test:
 	go test ./...
 	npm --prefix web run test
 	./test/installer/dry_run.sh
+	./test/release/version.sh
 
 test-installer:
 	./test/installer/dry_run.sh
+
+test-release:
+	./test/release/version.sh
 
 test-race:
 	go test -race ./...
