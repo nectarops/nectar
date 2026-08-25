@@ -59,6 +59,12 @@ command -v docker >/dev/null 2>&1 || {
 }
 
 installer_content=$(<"${installer}")
+# Exiting awk after the first match sends SIGPIPE to apt-cache under pipefail and aborts installation with 141.
+# shellcheck disable=SC2016
+assert_not_contains "${installer_content}" '$3 ~ ("^5:" requested "-") {print $3; exit}'
+# shellcheck disable=SC2016
+assert_contains "${installer_content}" \
+  '$3 ~ ("^5:" requested "-") && !selected {print $3; selected = 1}'
 # These assertions intentionally match unexpanded template expressions in install.sh.
 # shellcheck disable=SC2016
 assert_contains "${installer_content}" \

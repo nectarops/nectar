@@ -476,7 +476,9 @@ install_docker_deb() {
 
   if [[ "${dry_run}" != true ]]; then
     if [[ -n "${docker_version}" ]]; then
-      package_version=$(apt-cache madison docker-ce | awk -v requested="${docker_version}" '$3 ~ ("^5:" requested "-") {print $3; exit}')
+      package_version=$(apt-cache madison docker-ce |
+        awk -v requested="${docker_version}" \
+          '$3 ~ ("^5:" requested "-") && !selected {print $3; selected = 1}')
       [[ -n "${package_version}" ]] || die "Docker ${docker_version} is not available for this distribution"
     else
       package_version=$(apt-cache madison docker-ce | awk 'NR == 1 {print $3}')
