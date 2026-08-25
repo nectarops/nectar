@@ -199,7 +199,9 @@ remove_config || fail "disabled config purge did not return success"
 remove_data || fail "disabled data purge did not return success"
 
 if ! (
-  PATH=/usr/bin:/bin
+  # Isolate the post-uninstall assertion from tools preinstalled on the test runner.
+  # shellcheck disable=SC2123
+  PATH=""
   dry_run=false
   package_installed() {
     return 1
@@ -209,7 +211,9 @@ if ! (
   fail "clean post-uninstall state did not pass verification"
 fi
 if (
-  PATH=/usr/bin:/bin
+  # Isolate the post-uninstall assertion from tools preinstalled on the test runner.
+  # shellcheck disable=SC2123
+  PATH=""
   dry_run=false
   package_installed() {
     [[ "$1" == "docker-ce" ]]
