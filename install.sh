@@ -8,7 +8,7 @@ readonly PROGRAM="nectar-installer"
 readonly DOCKER_DEB_KEY_FINGERPRINT="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
 readonly DOCKER_RPM_KEY_FINGERPRINT="060A61C51B558A7F742B77AAC52FEB6B621E9F35"
 readonly DEFAULT_DOCKER_REPOSITORY_URL="https://download.docker.com/linux"
-readonly DEFAULT_NECTAR_VERSION="0.1.5"
+readonly DEFAULT_NECTAR_VERSION="0.1.6"
 readonly DEFAULT_WEB_PORT="8080"
 readonly INSTALL_DIR="/opt/nectar"
 readonly DATA_DIR="/var/lib/nectar"
@@ -165,7 +165,6 @@ validate_network_subnet() {
     die "Nectar network subnet must use the network address; expected the final octet to be 0 for a /24"
 }
 
-
 validate_swarm_address_pool() {
   local pool=$1
   local address=${pool%/*}
@@ -242,7 +241,6 @@ find_overlapping_cidr() {
   done <<<"${used_cidrs}"
   return 1
 }
-
 
 validate_existing_docker_network_overlaps() {
   [[ "${dry_run}" != true ]] || return 0
