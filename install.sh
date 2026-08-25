@@ -18,6 +18,7 @@ readonly NETWORK_NAME="nectar_control"
 readonly MANAGEMENT_NETWORK_NAME="traefik-public"
 readonly WEB_PUBLISH_MODE="host"
 readonly DAEMON_CONFIG="/etc/docker/daemon.json"
+readonly SWARM_POOL_MASK_LENGTH="24"
 
 docker_version=""
 advertise_addr=""
@@ -27,6 +28,11 @@ network_subnet=${NECTAR_NETWORK_SUBNET:-}
 network_subnet_explicit=false
 if [[ -n "${network_subnet}" ]]; then
   network_subnet_explicit=true
+fi
+swarm_address_pool=${NECTAR_SWARM_ADDRESS_POOL:-}
+swarm_address_pool_explicit=false
+if [[ -n "${swarm_address_pool}" ]]; then
+  swarm_address_pool_explicit=true
 fi
 force_docker_version=false
 dry_run=false
@@ -44,6 +50,7 @@ Options:
   --web-port PORT               Published Web port (default: 8080).
   --nectar-version VERSION       Deploy this pinned Nectar image tag.
   --network-subnet CIDR          Dedicated, unused IPv4 /24 for Nectar's Overlay network.
+  --swarm-address-pool CIDR      Default private IPv4 pool for Swarm Overlay networks.
   --force-docker-version        Explicitly allow changing an existing Docker version.
   --dry-run                     Validate and print planned actions without changing the host.
   --help                        Show this help.
@@ -52,6 +59,7 @@ Environment:
   NECTAR_IMAGE                  Override the complete pinned container image reference.
   NECTAR_DOCKER_REPOSITORY_URL  Override the Docker CE repository root.
   NECTAR_NETWORK_SUBNET         Override Nectar's automatically selected Overlay subnet.
+  NECTAR_SWARM_ADDRESS_POOL     Override the automatically selected Swarm Overlay address pool.
 EOF
 }
 
@@ -157,6 +165,36 @@ validate_network_subnet() {
     die "Nectar network subnet must use the network address; expected the final octet to be 0 for a /24"
 }
 
+
+validate_swarm_address_pool() {
+  local pool=$1
+  local address=${pool%/*}
+  local prefix=${pool#*/}
+  local address_integer
+  local bounds
+  local first
+  local network
+  local second
+
+  [[ "${pool}" == */* && "${prefix}" =~ ^([89]|1[0-9]|2[0-4])$ ]] ||
+    die "Swarm address pool must be an IPv4 CIDR between /8 and /24"
+  address_integer=$(ipv4_to_integer "${address}") ||
+    die "Swarm address pool must contain a valid IPv4 address"
+  local IFS=.
+  read -r first second _ _ <<<"${address}"
+  if ! ((10#${first} == 10 || (\
+    10#${first} == 172 && 10#${second} >= 16 && 10#${second} <= 31) || (\
+    10#${first} == 192 && 10#${second} == 168))); then
+    die "Swarm address pool must use RFC 1918 private address space"
+  fi
+  bounds=$(cidr_bounds "${pool}") || die "Swarm address pool is invalid"
+  IFS=' ' read -r network _ <<<"${bounds}"
+  ((address_integer == network)) ||
+    die "Swarm address pool must use the CIDR network address"
+  ((10#${prefix} <= 10#${SWARM_POOL_MASK_LENGTH})) ||
+    die "Swarm address pool prefix /${prefix} cannot be narrower than the /${SWARM_POOL_MASK_LENGTH} Overlay subnet size"
+}
+
 cidrs_overlap() {
   local first_bounds
   local first_start
@@ -205,6 +243,77 @@ find_overlapping_cidr() {
   return 1
 }
 
+
+validate_existing_docker_network_overlaps() {
+  [[ "${dry_run}" != true ]] || return 0
+  command -v docker >/dev/null 2>&1 || return 0
+  docker info >/dev/null 2>&1 || return 0
+
+  local -a records=()
+  local first
+  local first_cidr
+  local first_driver
+  local first_name
+  local first_scope
+  local i
+  local j
+  local network_id
+  local second
+  local second_cidr
+  local second_driver
+  local second_name
+  local second_scope
+
+  while IFS= read -r network_id; do
+    while IFS= read -r first; do
+      [[ -n "${first}" ]] && records+=("${first}")
+    done < <(docker network inspect --format \
+      '{{range .IPAM.Config}}{{if .Subnet}}{{$.Name}}|{{$.Driver}}|{{$.Scope}}|{{.Subnet}}{{println}}{{end}}{{end}}' \
+      "${network_id}" 2>/dev/null || true)
+  done < <(docker network ls --quiet)
+
+  for ((i = 0; i < ${#records[@]}; i++)); do
+    IFS='|' read -r first_name first_driver first_scope first_cidr <<<"${records[$i]}"
+    cidr_bounds "${first_cidr}" >/dev/null 2>&1 || continue
+    for ((j = i + 1; j < ${#records[@]}; j++)); do
+      IFS='|' read -r second_name second_driver second_scope second_cidr <<<"${records[$j]}"
+      cidr_bounds "${second_cidr}" >/dev/null 2>&1 || continue
+      if cidrs_overlap "${first_cidr}" "${second_cidr}"; then
+        die "Docker network address overlap detected before daemon restart: ${first_name} (${first_driver}/${first_scope}, ${first_cidr}) overlaps ${second_name} (${second_driver}/${second_scope}, ${second_cidr}). Refusing to restart Docker during an upgrade. Migrate or recreate the conflicting networks first; an existing Swarm default address pool cannot be changed in place."
+      fi
+    done
+  done
+}
+
+select_swarm_address_pool() {
+  local candidate
+  local overlap
+  local used_cidrs
+
+  used_cidrs=$(collect_used_ipv4_cidrs)
+  if [[ "${swarm_address_pool_explicit}" == true ]]; then
+    validate_swarm_address_pool "${swarm_address_pool}"
+    if overlap=$(find_overlapping_cidr "${swarm_address_pool}" "${used_cidrs}"); then
+      die "Swarm address pool ${swarm_address_pool} overlaps existing address space ${overlap}; choose another pool with --swarm-address-pool"
+    fi
+    return
+  fi
+
+  for candidate in \
+    "172.20.0.0/14" \
+    "172.24.0.0/14" \
+    "172.28.0.0/14" \
+    "10.240.0.0/12" \
+    "10.224.0.0/12"; do
+    if ! find_overlapping_cidr "${candidate}" "${used_cidrs}" >/dev/null; then
+      swarm_address_pool=${candidate}
+      return
+    fi
+  done
+
+  die "unable to find an unused private address pool for Swarm Overlay networks; pass --swarm-address-pool after reviewing host routes and Docker networks"
+}
+
 select_network_subnet() {
   local candidate
   local driver
@@ -240,6 +349,9 @@ select_network_subnet() {
   fi
 
   used_cidrs=$(collect_used_ipv4_cidrs)
+  if [[ -n "${swarm_address_pool}" ]]; then
+    used_cidrs=$(printf '%s\n%s\n' "${used_cidrs}" "${swarm_address_pool}")
+  fi
   if [[ "${network_subnet_explicit}" == true ]]; then
     validate_network_subnet "${network_subnet}"
     if overlap=$(find_overlapping_cidr "${network_subnet}" "${used_cidrs}"); then
@@ -308,6 +420,12 @@ while (($# > 0)); do
       network_subnet_explicit=true
       shift 2
       ;;
+    --swarm-address-pool)
+      (($# >= 2)) || die "--swarm-address-pool requires a value"
+      swarm_address_pool=$2
+      swarm_address_pool_explicit=true
+      shift 2
+      ;;
     --force-docker-version)
       force_docker_version=true
       shift
@@ -340,6 +458,9 @@ if [[ -n "${advertise_addr}" ]]; then
 fi
 if [[ "${network_subnet_explicit}" == true ]]; then
   validate_network_subnet "${network_subnet}"
+fi
+if [[ "${swarm_address_pool_explicit}" == true ]]; then
+  validate_swarm_address_pool "${swarm_address_pool}"
 fi
 
 [[ -r /etc/os-release ]] || die "/etc/os-release is required"
@@ -711,6 +832,11 @@ if [[ -z "${installed_docker}" || (-n "${docker_version}" && "${installed_docker
   install_docker
 fi
 
+# Existing installations can contain local and Swarm networks from independent
+# address allocators. Detect overlaps before an installer-triggered Docker restart
+# turns a latent conflict into rejected Swarm tasks.
+validate_existing_docker_network_overlaps
+
 configure_docker_logging
 run systemctl enable docker
 if [[ "${docker_config_changed}" == true ]]; then
@@ -736,7 +862,19 @@ if [[ "${dry_run}" != true ]]; then
 fi
 case "${swarm_state}" in
   inactive)
-    run docker swarm init --advertise-addr "${advertise_addr}"
+    if [[ "${dry_run}" == true ]]; then
+      if [[ -z "${swarm_address_pool}" ]]; then
+        swarm_address_pool="172.20.0.0/14"
+      fi
+      log "Would initialize Swarm with Overlay address pool ${swarm_address_pool} split into /${SWARM_POOL_MASK_LENGTH} networks."
+    else
+      select_swarm_address_pool
+      log "Initializing Swarm with Overlay address pool ${swarm_address_pool} split into /${SWARM_POOL_MASK_LENGTH} networks."
+    fi
+    run docker swarm init \
+      --advertise-addr "${advertise_addr}" \
+      --default-addr-pool "${swarm_address_pool}" \
+      --default-addr-pool-mask-length "${SWARM_POOL_MASK_LENGTH}"
     ;;
   active)
     if [[ "${dry_run}" != true ]]; then
