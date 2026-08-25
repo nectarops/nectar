@@ -296,7 +296,8 @@ install_docker_deb() {
     >/etc/apt/sources.list.d/docker.list
   apt-get update
   package_version=$(apt-cache madison docker-ce |
-    awk -v requested="${docker_target_version}" '$3 ~ ("^5:" requested "-") {print $3; exit}')
+    awk -v requested="${docker_target_version}" \
+      '$3 ~ ("^5:" requested "-") && !selected {print $3; selected = 1}')
   [[ -n "${package_version}" ]] || die "Docker ${docker_target_version} is unavailable for this distribution"
   apt-get install -y \
     "docker-ce=${package_version}" \

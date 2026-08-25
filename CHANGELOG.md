@@ -25,6 +25,7 @@ All notable user-facing changes are documented here. This project follows Semant
 
 ### Fixed
 
+- Prevent Docker package-version selection from aborting APT-based installation with exit 141.
 - Preserve the configured HTTPS management route when the host installer updates the Nectar Swarm service.
 - Prevent Nectar Swarm tasks from being rejected on hosts whose existing Docker networks overlap Swarm's
   automatically allocated Overlay subnet.
