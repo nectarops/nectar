@@ -31,6 +31,7 @@ containerd_package_preserved=false
 
 declare -a package_candidates=()
 declare -a installed_packages=()
+declare -a held_packages=()
 
 log() {
   printf '[%s] %s\n' "${PROGRAM}" "$*" >&2
@@ -265,7 +266,7 @@ package_installed() {
     apt)
       # dpkg-query expands this format expression; the shell must keep it literal.
       # shellcheck disable=SC2016
-      [[ "$(dpkg-query -W -f='${db:Status-Abbrev}' "${package}" 2>/dev/null || true)" == "ii " ]]
+      [[ "$(dpkg-query -W -f='${Status}' "${package}" 2>/dev/null || true)" == "install ok installed" ]]
       ;;
     dnf | yum | zypper)
       rpm -q "${package}" >/dev/null 2>&1
@@ -288,6 +289,7 @@ discover_installed_packages() {
   fi
 
   installed_packages=()
+  held_packages=()
   for package in "${package_candidates[@]}"; do
     if package_installed "${package}"; then
       if [[ "${package}" == "containerd.io" && "${shared_containerd_detected}" == true &&
@@ -296,6 +298,10 @@ discover_installed_packages() {
         continue
       fi
       installed_packages+=("${package}")
+      if [[ "${package_manager}" == "apt" ]] && command -v apt-mark >/dev/null 2>&1 &&
+        apt-mark showhold 2>/dev/null | grep -Fxq -- "${package}"; then
+        held_packages+=("${package}")
+      fi
     fi
   done
 
@@ -373,6 +379,7 @@ validate_safety() {
 }
 
 print_plan() {
+  local held="none detected"
   local packages="none detected"
 
   if ((${#installed_packages[@]} > 0)); then
@@ -381,10 +388,17 @@ print_plan() {
       printf '%s' "${installed_packages[*]}"
     )
   fi
+  if ((${#held_packages[@]} > 0)); then
+    held=$(
+      IFS=,
+      printf '%s' "${held_packages[*]}"
+    )
+  fi
   cat >&2 <<EOF
 [${PROGRAM}] Uninstall plan
   package manager:          ${package_manager}
   installed Docker packages: ${packages}
+  held Docker packages:     ${held}
   Docker CLI:              ${docker_path:-not found}
   Docker daemon:           ${dockerd_path:-not found}
   daemon reachable:        ${docker_daemon_available}
@@ -404,6 +418,21 @@ deletes images, containers, named volumes, networks, Swarm state, configs, and s
 Bind-mounted host directories and per-user rootless Docker data are not removed.
 Deleting /var/lib/containerd can also destroy Kubernetes, k3s, or RKE2 workload state.
 EOF
+}
+
+preflight_package_removal() {
+  local output=""
+
+  ((${#installed_packages[@]} > 0)) || return 0
+  [[ "${package_manager}" == "apt" ]] || return 0
+
+  if ! output=$(apt-get --simulate purge --allow-change-held-packages \
+    "${installed_packages[@]}" 2>&1); then
+    log "APT package-removal preflight failed before Docker or Swarm was changed:"
+    printf '%s\n' "${output}" >&2
+    die "resolve the reported APT dependency state, then rerun the same uninstall command"
+  fi
+  log "APT package-removal dependency preflight passed."
 }
 
 confirm_uninstall() {
@@ -474,7 +503,7 @@ remove_packages() {
   else
     case "${package_manager}" in
       apt)
-        run apt-get purge -y "${installed_packages[@]}"
+        run apt-get purge -y --allow-change-held-packages "${installed_packages[@]}"
         ;;
       dnf)
         run dnf -y remove "${installed_packages[@]}"
@@ -497,6 +526,30 @@ remove_packages() {
 
   if [[ "${snap_docker_installed}" == true ]]; then
     run snap remove --purge docker
+  fi
+}
+
+verify_uninstall() {
+  local package
+  local remaining_docker=""
+  local remaining_dockerd=""
+  local -a remaining_packages=()
+
+  [[ "${dry_run}" != true ]] || return 0
+  for package in "${package_candidates[@]}"; do
+    if package_installed "${package}"; then
+      remaining_packages+=("${package}")
+    fi
+  done
+  if ((${#remaining_packages[@]} > 0)); then
+    die "Docker packages remain installed after removal: ${remaining_packages[*]}"
+  fi
+
+  hash -r
+  remaining_docker=$(command -v docker 2>/dev/null || true)
+  remaining_dockerd=$(command -v dockerd 2>/dev/null || true)
+  if [[ -n "${remaining_docker}" || -n "${remaining_dockerd}" ]]; then
+    die "Docker binaries remain after package removal: docker=${remaining_docker:-not found}, dockerd=${remaining_dockerd:-not found}"
   fi
 }
 
@@ -604,6 +657,7 @@ main() {
   inspect_docker
   validate_safety
   print_plan
+  preflight_package_removal
   confirm_uninstall
 
   leave_swarm
@@ -613,6 +667,7 @@ main() {
   remove_config
   remove_data
   report_remaining_manual_install
+  verify_uninstall
 
   if [[ "${dry_run}" == true ]]; then
     log "Dry run completed. No host changes were made."

@@ -167,6 +167,13 @@ delete bind-mounted host directories or per-user rootless Docker data. Back up d
 The uninstaller ignores remote Docker contexts and `DOCKER_HOST`, and operates only through the local system
 socket at `/var/run/docker.sock`.
 
+On `apt` systems, the uninstaller recognizes installed Docker packages even when `apt-mark hold` was applied
+by the Nectar installer. Before it leaves Swarm or stops Docker, it simulates the complete package-removal
+transaction so a dependency conflict cannot leave the host half-uninstalled. The real purge removes the held
+Engine, CLI, plugins, and `containerd.io` packages in the same transaction without requiring a separate
+`apt-mark unhold` command. A final verification returns a failure if a known Docker package or Docker daemon
+binary remains, making the same command safe to inspect and rerun after an interruption.
+
 The script refuses to purge `/var/lib/containerd` when it detects Kubernetes, k3s, or RKE2 state because
 those systems may share the runtime. Removing shared runtime data additionally requires
 `--force-shared-containerd`; prefer omitting the containerd purge instead. Without that override, the script

@@ -3,7 +3,7 @@
 
 # This test sources the runtime-selected repository script and mutates globals consumed by
 # its functions. ShellCheck cannot follow that dynamic source or connect those assignments.
-# shellcheck disable=SC1090,SC1091,SC2034,SC2154
+# shellcheck disable=SC1090,SC1091,SC2034,SC2154,SC2329
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -60,6 +60,15 @@ parse_args --all
 [[ "${purge_static_binaries}" == true ]] || fail "--all did not enable static binary purge"
 
 package_manager=apt
+if ! (
+  dpkg-query() {
+    printf '%s' 'install ok installed'
+  }
+  package_installed docker-ce
+); then
+  fail "APT package detection did not recognize an installed held package"
+fi
+
 package_candidates=(docker-ce docker-ce-cli containerd.io docker.io)
 purge_containerd_data=false
 shared_containerd_detected=false
@@ -75,6 +84,15 @@ discover_installed_packages
   fail "package discovery did not preserve the expected package list"
 [[ "${remove_containerd_service}" == true ]] ||
   fail "containerd.io did not enable containerd service cleanup"
+
+apt-mark() {
+  [[ "$1" == "showhold" ]] || return 1
+  printf '%s\n' docker-ce
+}
+discover_installed_packages
+held_package_plan=$(print_plan 2>&1)
+unset -f apt-mark
+assert_contains "${held_package_plan}" "held Docker packages:     docker-ce"
 
 remove_containerd_service=false
 shared_containerd_detected=true
@@ -114,8 +132,29 @@ assert_contains "${manager_leave_plan}" "docker swarm leave --force"
 
 package_manager=apt
 installed_packages=(docker-ce docker-ce-cli)
+preflight_output=$(
+  apt-get() {
+    return 0
+  }
+  preflight_package_removal 2>&1
+)
+assert_contains "${preflight_output}" "APT package-removal dependency preflight passed"
+
+if preflight_failure=$(
+  apt-get() {
+    printf '%s\n' "containerd.io cannot be removed" >&2
+    return 1
+  }
+  preflight_package_removal 2>&1
+); then
+  fail "APT dependency preflight unexpectedly accepted a resolver failure"
+fi
+assert_contains "${preflight_failure}" "before Docker or Swarm was changed"
+assert_contains "${preflight_failure}" "containerd.io cannot be removed"
+
 package_plan=$(remove_packages)
-assert_contains "${package_plan}" "apt-get purge -y docker-ce docker-ce-cli"
+assert_contains "${package_plan}" \
+  "apt-get purge -y --allow-change-held-packages docker-ce docker-ce-cli"
 
 package_manager=dnf
 package_plan=$(remove_packages)
@@ -158,5 +197,26 @@ leave_swarm || fail "non-Swarm host did not skip Swarm leave successfully"
 remove_static_binaries || fail "disabled static binary purge did not return success"
 remove_config || fail "disabled config purge did not return success"
 remove_data || fail "disabled data purge did not return success"
+
+if ! (
+  PATH=/usr/bin:/bin
+  dry_run=false
+  package_installed() {
+    return 1
+  }
+  verify_uninstall
+); then
+  fail "clean post-uninstall state did not pass verification"
+fi
+if (
+  PATH=/usr/bin:/bin
+  dry_run=false
+  package_installed() {
+    [[ "$1" == "docker-ce" ]]
+  }
+  verify_uninstall >/dev/null 2>&1
+); then
+  fail "post-uninstall verification accepted a remaining Docker package"
+fi
 
 printf '%s\n' 'node Docker uninstaller tests passed'

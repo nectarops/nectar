@@ -27,6 +27,7 @@ All notable user-facing changes are documented here. This project follows Semant
 
 ### Fixed
 
+- Detect and remove held APT Docker packages in one preflighted transaction during a complete node uninstall.
 - Preserve the configured HTTPS management route when the host installer updates the Nectar Swarm service.
 - Prevent Nectar Swarm tasks from being rejected on hosts whose existing Docker networks overlap Swarm's
   automatically allocated Overlay subnet.
