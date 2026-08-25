@@ -43,23 +43,23 @@ Nectar must run on a Swarm Manager with access to `/var/run/docker.sock`. Docker
 
 ## Installation
 
-<!-- nectar-release-version: 0.1.3 -->
+<!-- nectar-release-version: 0.1.4 -->
 
-No public container image or GitHub release is assumed to exist until the repository publishes `v0.1.3`. For a published release, the intended one-line flow is:
+No public container image or GitHub release is assumed to exist until the repository publishes `v0.1.4`. For a published release, the intended one-line flow is:
 
 ```bash
-curl -fsSL https://github.com/nectarops/nectar/releases/download/v0.1.3/install.sh \
+curl -fsSL https://github.com/nectarops/nectar/releases/download/v0.1.4/install.sh \
   | sudo bash -s -- \
       --docker-version 29.0.1 \
       --advertise-addr 192.0.2.10 \
-      --nectar-version 0.1.3
+      --nectar-version 0.1.4
 ```
 
 The safer inspect-and-verify flow is:
 
 ```bash
-curl -fLO https://github.com/nectarops/nectar/releases/download/v0.1.3/install.sh
-curl -fLO https://github.com/nectarops/nectar/releases/download/v0.1.3/SHA256SUMS
+curl -fLO https://github.com/nectarops/nectar/releases/download/v0.1.4/install.sh
+curl -fLO https://github.com/nectarops/nectar/releases/download/v0.1.4/SHA256SUMS
 sha256sum --check --ignore-missing SHA256SUMS
 less install.sh
 sudo bash install.sh --dry-run --advertise-addr 192.0.2.10
@@ -113,7 +113,7 @@ On the first visit, open the printed `http://<manager-ip>:<port>` URL and create
 To test an unpublished image, build and push it under a pinned tag, then set `NECTAR_IMAGE`:
 
 ```bash
-sudo NECTAR_IMAGE=registry.example.com/ops/nectar:0.1.3 \
+sudo NECTAR_IMAGE=registry.example.com/ops/nectar:0.1.4 \
   bash install.sh --advertise-addr 192.0.2.10
 ```
 
