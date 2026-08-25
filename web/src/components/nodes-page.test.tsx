@@ -52,6 +52,51 @@ test('shows live nodes and generates a Manager enrollment command', async () => 
   expect(eventSources[0]?.url).toContain(`${enrollment.id}/events`)
 })
 
+test('hides duplicate Down history by default and reveals it through the node filter', async () => {
+  const interaction = userEvent.setup()
+  const readyNode = {
+    ...swarmNode,
+    id: 'readyabcdefghijklmnopqrs',
+    hostname: 'worker-rejoined',
+    address: '10.0.0.22',
+    dockerVersion: '28.3.0',
+    versionDrift: false,
+  }
+  const historicalNode = {
+    ...readyNode,
+    id: 'downabcdefghijklmnopqrst',
+    status: 'down',
+  }
+  const offlineNode = {
+    ...readyNode,
+    id: 'offlineabcdefghijklmnopq',
+    hostname: 'worker-offline',
+    address: '10.0.0.23',
+    status: 'down',
+  }
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input) === '/api/v1/nodes') {
+      return jsonResponse({ nodes: [readyNode, historicalNode, offlineNode] })
+    }
+    throw new Error(`unexpected request: ${String(input)}`)
+  }))
+
+  render(<NodesPage canManage={false} />)
+
+  expect(await screen.findByText(readyNode.id)).toBeInTheDocument()
+  expect(screen.getByText(offlineNode.id)).toBeInTheDocument()
+  expect(screen.queryByText(historicalNode.id)).not.toBeInTheDocument()
+  expect(screen.getByText('Current 2')).toBeInTheDocument()
+  expect(screen.getByText('All 3')).toBeInTheDocument()
+  expect(screen.getByText(/1 historical Down record hidden/)).toBeInTheDocument()
+
+  await interaction.click(screen.getByRole('radio', { name: 'Show all node records' }))
+
+  expect(await screen.findByText(historicalNode.id)).toBeInTheDocument()
+  expect(screen.getByText('historical')).toBeInTheDocument()
+  expect(screen.getByText(/including 1 historical Down record/)).toBeInTheDocument()
+})
+
 class FakeEventSource {
   static readonly CLOSED = 2
   readonly url: string

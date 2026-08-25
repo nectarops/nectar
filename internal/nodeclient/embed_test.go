@@ -36,3 +36,18 @@ func TestEmbeddedClientConsumesDockerPackageVersionOutput(t *testing.T) {
 		t.Fatal("Script() does not consume apt-cache output while selecting the first Docker package version")
 	}
 }
+
+func TestEmbeddedClientLeavesTargetSwarmVerificationToManager(t *testing.T) {
+	t.Parallel()
+
+	script := Script()
+	if bytes.Contains(script, []byte("{{.Swarm.Cluster.ID}}")) {
+		t.Fatal("Script() reads Manager-only cluster details from a Worker")
+	}
+	if !bytes.Contains(script, []byte("the Manager will verify its membership")) {
+		t.Fatal("Script() does not defer active node membership verification to the Manager")
+	}
+	if !bytes.Contains(script, []byte("node_id=$(docker info --format '{{.Swarm.NodeID}}')")) {
+		t.Fatal("Script() does not submit the local Node ID for Manager verification")
+	}
+}

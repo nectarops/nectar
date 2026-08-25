@@ -33,6 +33,7 @@ import {
   FieldTitle,
 } from '@/components/ui/field'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   createNodeEnrollment,
   getNodeEnrollments,
@@ -52,16 +53,21 @@ const terminalStatuses = new Set([
   'expired',
 ])
 
+type NodeView = 'current' | 'all'
+
 export function NodesPage({ canManage }: { canManage: boolean }) {
   const [nodes, setNodes] = useState<SwarmNode[]>([])
   const [enrollments, setEnrollments] = useState<NodeEnrollment[]>([])
   const [role, setRole] = useState<NodeRole>('worker')
+  const [nodeView, setNodeView] = useState<NodeView>('current')
   const [generated, setGenerated] = useState<NodeEnrollmentCommand | null>(null)
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState('')
   const streamRef = useRef<EventSource | null>(null)
+  const partitionedNodes = partitionSwarmNodes(nodes)
+  const visibleNodes = nodeView === 'all' ? nodes : partitionedNodes.current
 
   const loadPage = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -229,10 +235,38 @@ export function NodesPage({ canManage }: { canManage: boolean }) {
       </Alert>
 
       <div className="flex flex-col gap-4">
-        <div>
-          <h2 className="text-xl font-semibold">Current Swarm nodes</h2>
-          <p className="text-sm text-muted-foreground">Live data from the Docker Engine API.</p>
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+          <div>
+            <h2 className="text-xl font-semibold">Swarm nodes</h2>
+            <p className="text-sm text-muted-foreground">Live data from the Docker Engine API.</p>
+          </div>
+          {nodes.length > 0 ? (
+            <ToggleGroup
+              type="single"
+              variant="outline"
+              size="sm"
+              value={nodeView}
+              onValueChange={(value) => {
+                if (value === 'current' || value === 'all') setNodeView(value)
+              }}
+              aria-label="Filter Swarm nodes"
+            >
+              <ToggleGroupItem value="current" aria-label="Show current node records">
+                Current {partitionedNodes.current.length}
+              </ToggleGroupItem>
+              <ToggleGroupItem value="all" aria-label="Show all node records">
+                All {nodes.length}
+              </ToggleGroupItem>
+            </ToggleGroup>
+          ) : null}
         </div>
+        {partitionedNodes.historicalIDs.size > 0 ? (
+          <p className="text-sm text-muted-foreground" aria-live="polite">
+            {nodeView === 'current'
+              ? `${partitionedNodes.historicalIDs.size} historical Down ${nodeRecordLabel(partitionedNodes.historicalIDs.size)} hidden. Select All to inspect stale Node IDs.`
+              : `Showing all records, including ${partitionedNodes.historicalIDs.size} historical Down ${nodeRecordLabel(partitionedNodes.historicalIDs.size)}.`}
+          </p>
+        ) : null}
         {loading ? <NodeSkeleton /> : null}
         {!loading && nodes.length === 0 ? (
           <Card>
@@ -243,9 +277,15 @@ export function NodesPage({ canManage }: { canManage: boolean }) {
             </CardContent>
           </Card>
         ) : null}
-        {nodes.length > 0 ? (
+        {visibleNodes.length > 0 ? (
           <div className="grid gap-4 lg:grid-cols-2">
-            {nodes.map((node) => <NodeCard key={node.id} node={node} />)}
+            {visibleNodes.map((node) => (
+              <NodeCard
+                key={node.id}
+                node={node}
+                historical={partitionedNodes.historicalIDs.has(node.id)}
+              />
+            ))}
           </div>
         ) : null}
       </div>
@@ -392,7 +432,7 @@ function RoleOption({
   )
 }
 
-function NodeCard({ node }: { node: SwarmNode }) {
+function NodeCard({ node, historical }: { node: SwarmNode; historical: boolean }) {
   return (
     <Card>
       <CardHeader>
@@ -402,6 +442,7 @@ function NodeCard({ node }: { node: SwarmNode }) {
             <CardDescription>{node.address} · {node.operatingSystem} · {node.architecture}</CardDescription>
           </div>
           <div className="flex gap-2">
+            {historical ? <Badge variant="secondary">historical</Badge> : null}
             <Badge variant={node.status === 'ready' ? 'default' : 'secondary'}>{node.status}</Badge>
             <Badge variant="outline">{node.role}</Badge>
           </div>
@@ -503,4 +544,32 @@ function fetchNodePage(canManage: boolean, signal?: AbortSignal) {
     getNodes(signal),
     canManage ? getNodeEnrollments(signal) : Promise.resolve([]),
   ])
+}
+
+function partitionSwarmNodes(nodes: SwarmNode[]) {
+  const currentIdentities = new Set<string>()
+  const historicalIDs = new Set<string>()
+
+  for (const node of nodes) {
+    if (node.status.toLowerCase() !== 'down') {
+      currentIdentities.add(nodeIdentity(node))
+    }
+  }
+
+  const current = nodes.filter((node) => {
+    const historical = node.status.toLowerCase() === 'down' &&
+      currentIdentities.has(nodeIdentity(node))
+    if (historical) historicalIDs.add(node.id)
+    return !historical
+  })
+
+  return { current, historicalIDs }
+}
+
+function nodeIdentity(node: SwarmNode) {
+  return `${node.hostname.trim().toLowerCase()}\u0000${node.address.trim().toLowerCase()}`
+}
+
+function nodeRecordLabel(count: number) {
+  return count === 1 ? 'record' : 'records'
 }

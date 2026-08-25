@@ -389,13 +389,6 @@ install_docker() {
     die "Docker version verification failed: expected ${docker_target_version}, found ${actual_version:-none}"
 }
 
-verify_local_swarm() {
-  local actual_cluster_id
-  actual_cluster_id=$(docker info --format '{{.Swarm.Cluster.ID}}' 2>/dev/null || true)
-  [[ "${actual_cluster_id}" == "${swarm_cluster_id}" ]] ||
-    die "this host already belongs to a different Docker Swarm"
-}
-
 join_swarm() {
   local docker_api_version
   local local_state
@@ -423,11 +416,9 @@ join_swarm() {
         --data-binary "@${join_request_file}" \
         --output "${join_response_file}" \
         "http://localhost/v${docker_api_version}/swarm/join"
-      verify_local_swarm
       ;;
     active)
-      verify_local_swarm
-      log "This host is already a member of the target Swarm; reusing its membership."
+      log "This host is already an active Swarm node; the Manager will verify its membership."
       ;;
     *) die "Docker Swarm state ${local_state} is not safe for automatic enrollment" ;;
   esac
