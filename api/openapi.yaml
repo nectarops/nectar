@@ -29,6 +29,15 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Version" }
+  /client.sh:
+    get:
+      operationId: getNodeEnrollmentClient
+      responses:
+        "200":
+          description: Embedded Bash client used by a generated enrollment command.
+          content:
+            text/x-shellscript:
+              schema: { type: string }
   /api/v1/setup/status:
     get:
       operationId: getSetupStatus
@@ -147,12 +156,194 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/DeploymentResult" }
         "400": { $ref: "#/components/responses/Error" }
+  /api/v1/nodes:
+    get:
+      operationId: listNodes
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: Live nodes returned by the connected Swarm Manager.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [nodes]
+                properties:
+                  nodes:
+                    type: array
+                    items: { $ref: "#/components/schemas/SwarmNode" }
+        "401": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /api/v1/node-enrollments:
+    get:
+      operationId: listNodeEnrollments
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: Recent Owner-created node enrollment operations.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enrollments]
+                properties:
+                  enrollments:
+                    type: array
+                    items: { $ref: "#/components/schemas/NodeEnrollment" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createNodeEnrollment
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [role]
+              properties:
+                role: { $ref: "#/components/schemas/NodeRole" }
+      responses:
+        "201":
+          description: A short-lived, machine-binding enrollment command. The command is returned once.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enrollment, command]
+                properties:
+                  enrollment: { $ref: "#/components/schemas/NodeEnrollment" }
+                  command: { type: string, writeOnly: true }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /api/v1/node-enrollments/{id}:
+    parameters:
+      - $ref: "#/components/parameters/EnrollmentId"
+    delete:
+      operationId: revokeNodeEnrollment
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: Enrollment revoked by an Owner.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeEnrollment" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /api/v1/node-enrollments/{id}/events:
+    parameters:
+      - $ref: "#/components/parameters/EnrollmentId"
+    get:
+      operationId: streamNodeEnrollmentEvents
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: Durable enrollment progress as Server-Sent Events; supports Last-Event-ID.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /api/v1/node-enrollments/claim:
+    post:
+      operationId: claimNodeEnrollment
+      security: [{ enrollmentToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema: { $ref: "#/components/schemas/NodeEnrollmentClaim" }
+      responses:
+        "200":
+          description: Bootstrap policy and Worker-only Swarm join configuration for the bound machine.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            text/plain:
+              schema: { type: string, writeOnly: true }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "410": { $ref: "#/components/responses/Error" }
+  /api/v1/node-enrollments/progress:
+    post:
+      operationId: reportNodeEnrollmentProgress
+      security: [{ enrollmentToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [machineIdHash, phase]
+              properties:
+                machineIdHash: { type: string, pattern: "^[a-f0-9]{64}$", writeOnly: true }
+                phase:
+                  type: string
+                  enum: [installing, docker-ready, joining, verifying, failed]
+                dockerVersion: { type: string }
+      responses:
+        "204": { description: Progress persisted. }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "410": { $ref: "#/components/responses/Error" }
+  /api/v1/node-enrollments/complete:
+    post:
+      operationId: completeNodeEnrollment
+      security: [{ enrollmentToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [machineIdHash, nodeId]
+              properties:
+                machineIdHash: { type: string, pattern: "^[a-f0-9]{64}$", writeOnly: true }
+                nodeId: { type: string }
+      responses:
+        "200":
+          description: Node verified and assigned its requested role.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeEnrollment" }
+        "202":
+          description: Node remains a Worker because Manager promotion policy was not satisfied.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeEnrollment" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "410": { $ref: "#/components/responses/Error" }
 components:
   securitySchemes:
     sessionCookie:
       type: apiKey
       in: cookie
       name: dw_session
+    enrollmentToken:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque enrollment credential
+  parameters:
+    EnrollmentId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, pattern: "^ne_[A-Za-z0-9_-]{20,80}$" }
   responses:
     User:
       description: Authenticated user.
@@ -192,6 +383,89 @@ components:
         nodeRole: { type: string }
         nodes: { type: integer }
         managers: { type: integer }
+    NodeRole:
+      type: string
+      enum: [worker, manager]
+    SwarmNode:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - hostname
+        - role
+        - status
+        - availability
+        - address
+        - operatingSystem
+        - architecture
+        - dockerVersion
+        - desiredDockerVersion
+        - versionDrift
+      properties:
+        id: { type: string }
+        hostname: { type: string }
+        role: { $ref: "#/components/schemas/NodeRole" }
+        status: { type: string }
+        availability: { type: string }
+        managerStatus: { type: string }
+        address: { type: string }
+        managerAddress: { type: string }
+        operatingSystem: { type: string }
+        architecture: { type: string }
+        dockerVersion: { type: string }
+        desiredDockerVersion: { type: string }
+        versionDrift: { type: boolean }
+    NodeEnrollment:
+      type: object
+      additionalProperties: false
+      required: [id, requestedRole, status, expiresAt, createdBy, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        requestedRole: { $ref: "#/components/schemas/NodeRole" }
+        status:
+          type: string
+          enum:
+            - pending
+            - claimed
+            - installing
+            - joining
+            - verifying
+            - promoting
+            - completed
+            - promotion_blocked
+            - failed
+            - revoked
+            - expired
+        hostname: { type: string }
+        operatingSystem: { type: string }
+        architecture: { type: string }
+        advertiseAddress: { type: string }
+        dataPathAddress: { type: string }
+        dockerVersion: { type: string }
+        nodeId: { type: string }
+        message: { type: string }
+        expiresAt: { type: string, format: date-time }
+        createdBy: { type: integer, format: int64 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    NodeEnrollmentClaim:
+      type: object
+      additionalProperties: false
+      required:
+        - hostname
+        - machineIdHash
+        - operatingSystem
+        - architecture
+        - advertiseAddress
+        - dataPathAddress
+      properties:
+        hostname: { type: string }
+        machineIdHash: { type: string, pattern: "^[a-f0-9]{64}$", writeOnly: true }
+        operatingSystem: { type: string }
+        architecture: { type: string }
+        advertiseAddress: { type: string, format: ipv4 }
+        dataPathAddress: { type: string, format: ipv4 }
+        dockerVersion: { type: string }
     ManagementAccess:
       type: object
       additionalProperties: false

@@ -27,6 +27,7 @@ type Options struct {
 	Cluster          *application.ClusterService
 	ManagementAccess *application.ManagementAccessService
 	Deployments      *application.DeploymentService
+	NodeEnrollments  *application.NodeEnrollmentService
 	Store            Readiness
 	Docker           Readiness
 	RequireDocker    bool
@@ -43,6 +44,7 @@ type Server struct {
 	cluster          *application.ClusterService
 	managementAccess *application.ManagementAccessService
 	deployments      *application.DeploymentService
+	nodeEnrollments  *application.NodeEnrollmentService
 	store            Readiness
 	docker           Readiness
 	requireDocker    bool
@@ -66,6 +68,9 @@ func NewServer(options Options) (*Server, error) {
 	if options.Deployments == nil {
 		return nil, errors.New("deployment service is required")
 	}
+	if options.NodeEnrollments == nil {
+		return nil, errors.New("node enrollment service is required")
+	}
 	if options.Store == nil {
 		return nil, errors.New("store readiness check is required")
 	}
@@ -79,6 +84,7 @@ func NewServer(options Options) (*Server, error) {
 		cluster:          options.Cluster,
 		managementAccess: options.ManagementAccess,
 		deployments:      options.Deployments,
+		nodeEnrollments:  options.NodeEnrollments,
 		store:            options.Store,
 		docker:           options.Docker,
 		requireDocker:    options.RequireDocker,
@@ -95,6 +101,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /health/live", s.handleLiveness)
 	mux.HandleFunc("GET /health/ready", s.handleReadiness)
 	mux.HandleFunc("GET /api/v1/version", s.handleVersion)
+	mux.HandleFunc("GET /client.sh", s.handleNodeClientScript)
 	mux.HandleFunc("GET /api/v1/setup/status", s.handleSetupStatus)
 	mux.HandleFunc("POST /api/v1/setup/complete", s.handleSetupComplete)
 	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
@@ -104,6 +111,14 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/management-access", s.requireAuth(s.requireOwner(http.HandlerFunc(s.handleManagementAccess))))
 	mux.Handle("PUT /api/v1/management-access", s.requireAuth(s.requireOwner(http.HandlerFunc(s.handleManagementAccessUpdate))))
 	mux.Handle("POST /api/v1/deployments", s.requireAuth(http.HandlerFunc(s.handleDeployment)))
+	mux.Handle("GET /api/v1/nodes", s.requireAuth(http.HandlerFunc(s.handleNodes)))
+	mux.Handle("GET /api/v1/node-enrollments", s.requireAuth(s.requireOwner(http.HandlerFunc(s.handleNodeEnrollments))))
+	mux.Handle("POST /api/v1/node-enrollments", s.requireAuth(s.requireOwner(http.HandlerFunc(s.handleNodeEnrollmentCreate))))
+	mux.Handle("DELETE /api/v1/node-enrollments/{id}", s.requireAuth(s.requireOwner(http.HandlerFunc(s.handleNodeEnrollmentRevoke))))
+	mux.Handle("GET /api/v1/node-enrollments/{id}/events", s.requireAuth(s.requireOwner(http.HandlerFunc(s.handleNodeEnrollmentEvents))))
+	mux.HandleFunc("POST /api/v1/node-enrollments/claim", s.handleNodeEnrollmentClaim)
+	mux.HandleFunc("POST /api/v1/node-enrollments/progress", s.handleNodeEnrollmentProgress)
+	mux.HandleFunc("POST /api/v1/node-enrollments/complete", s.handleNodeEnrollmentComplete)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "API route not found")
 	})
