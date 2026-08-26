@@ -30,3 +30,6 @@
 .idea/
 .vscode/
 *.swp
+
+
+tasks/
