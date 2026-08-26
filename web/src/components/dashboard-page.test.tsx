@@ -66,6 +66,81 @@ test('moves the deployment form behind the sidebar navigation', async () => {
   )
 })
 
+test('navigates through workspace and manage views seamlessly', async () => {
+  const interaction = userEvent.setup()
+  stubCluster({
+    ...clusterSnapshot,
+    swarmState: 'active',
+    managers: 1,
+    nodes: 1,
+  })
+
+  render(
+    <DashboardPage
+      user={user}
+      version={version}
+      onLoggedOut={vi.fn()}
+    />,
+  )
+
+  await screen.findByRole('heading', { name: 'Your Swarm at a glance' })
+
+  // Navigate to Projects
+  await interaction.click(screen.getByRole('button', { name: 'Projects' }))
+  expect(screen.getByRole('heading', { name: 'Projects & Services' })).toBeInTheDocument()
+
+  // Navigate to Terminal
+  await interaction.click(screen.getByRole('button', { name: 'Terminal' }))
+  expect(screen.getByRole('heading', { name: 'Terminal & Daemon Logs' })).toBeInTheDocument()
+
+  // Navigate to S3 Storage
+  await interaction.click(screen.getByRole('button', { name: 'S3 Storage' }))
+  expect(screen.getByRole('heading', { name: 'S3 Storage & Volumes' })).toBeInTheDocument()
+
+  // Navigate to Network
+  await interaction.click(screen.getByRole('button', { name: 'Network' }))
+  expect(screen.getByRole('heading', { name: 'Networks & Routing' })).toBeInTheDocument()
+
+  // Navigate to Keys & Tokens
+  await interaction.click(screen.getByRole('button', { name: 'Keys & Tokens' }))
+  expect(screen.getByRole('heading', { name: 'Keys & Tokens' })).toBeInTheDocument()
+
+  // Navigate to Settings
+  await interaction.click(screen.getByRole('button', { name: 'Settings' }))
+  expect(screen.getByRole('heading', { name: 'Cluster Settings' })).toBeInTheDocument()
+})
+
+test('supports toggling sidebar collapse and command search palette', async () => {
+  const interaction = userEvent.setup()
+  stubCluster(clusterSnapshot)
+
+  render(
+    <DashboardPage
+      user={user}
+      version={version}
+      onLoggedOut={vi.fn()}
+    />,
+  )
+
+  await screen.findByRole('heading', { name: 'Your Swarm at a glance' })
+
+  // Collapse sidebar
+  const collapseButton = screen.getByRole('button', { name: 'Collapse sidebar' })
+  await interaction.click(collapseButton)
+  expect(screen.getByRole('button', { name: 'Expand sidebar' })).toBeInTheDocument()
+
+  // Open search command palette
+  const searchButton = screen.getByRole('button', { name: 'Search' })
+  await interaction.click(searchButton)
+
+  expect(screen.getByRole('dialog', { name: 'Command search' })).toBeInTheDocument()
+  expect(screen.getByPlaceholderText('Search dashboard, services, commands...')).toBeInTheDocument()
+
+  // Close search
+  await interaction.click(screen.getByRole('button', { name: 'Close command search' }))
+  expect(screen.queryByRole('dialog', { name: 'Command search' })).not.toBeInTheDocument()
+})
+
 test('explains why deployment is unavailable when Swarm is inactive', async () => {
   const interaction = userEvent.setup()
   stubCluster(clusterSnapshot)
